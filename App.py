@@ -42,14 +42,17 @@ if uploaded_file is not None:
         # Kumpulkan data lain untuk kontainer yang sedang diproses
         elif line.startswith("LOC+11+"):  # Port of Discharge
             try:
-                current_container_data["Port of Discharge"] = line.split("+")[2].split(":")[0]
+                # Menghapus apostrof jika ada
+                pod = line.split("+")[2].split(":")[0]
+                current_container_data["Port of Discharge"] = pod.replace("'", "")
             except IndexError:
                 pass  # Abaikan jika format baris salah
 
         elif line.startswith("LOC+9+"):  # Port of Loading
             try:
-                # Membersihkan spasi dan mengubah ke huruf besar agar konsisten (IDJKT, idjkt, IDJKT )
-                current_container_data["Port of Loading"] = line.split("+")[2].split(":")[0].strip().upper()
+                # Membersihkan spasi, mengubah ke huruf besar, DAN MENGHAPUS APOSTROF
+                pol = line.split("+")[2].split(":")[0]
+                current_container_data["Port of Loading"] = pol.strip().upper().replace("'", "")
             except IndexError:
                 pass
 
