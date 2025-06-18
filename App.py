@@ -49,8 +49,8 @@ def parse_edi_to_pivot(uploaded_file):
                 current_container_data["Port of Loading"] = pol.strip().upper().replace("'", "")
             except IndexError:
                 pass
-        # --- BARU: Membaca data berat ---
-        elif line.startswith("MEA+WT++KGM:"):
+        # --- PERUBAHAN: Membaca data berat dari VGM ---
+        elif line.startswith("MEA+VGM++KGM:"):
             try:
                 weight_str = line.split(':')[-1]
                 current_container_data['Weight'] = pd.to_numeric(weight_str, errors='coerce')
@@ -78,7 +78,7 @@ def parse_edi_to_pivot(uploaded_file):
     if df_display.empty:
         return pd.DataFrame()
 
-    # --- BARU: Agregasi jumlah dan berat ---
+    # --- Agregasi jumlah dan berat ---
     pivot_df = df_display.groupby(["Bay", "Port of Discharge"], as_index=False).agg(
         **{'Jumlah Kontainer': ('Bay', 'size'), 'Total Berat': ('Weight', 'sum')}
     )
@@ -168,7 +168,7 @@ def create_summary_table(pivots_dict, detailed_forecast_df):
     summaries = []
     for file_name, pivot in pivots_dict.items():
         if not pivot.empty:
-            # --- BARU: Agregasi jumlah dan berat ---
+            # Agregasi jumlah dan berat
             summary = pivot.groupby("Port of Discharge").agg(
                 **{f'Jumlah ({file_name})': ('Jumlah Kontainer', 'sum'), f'Berat ({file_name})': ('Total Berat', 'sum')}
             )
@@ -309,7 +309,6 @@ def create_macro_slot_table(comparison_df, num_clusters=6):
 
     return slot_df
 
-# --- FUNGSI BARU UNTUK GRAFIK BERAT ---
 def create_weight_chart(comparison_df):
     """
     Membuat dan menampilkan bar chart untuk total prediksi berat per Bay.
@@ -402,7 +401,7 @@ else:
             
             # --- BUAT DAN TAMPILKAN GRAFIK BERAT ---
             st.markdown("---")
-            st.header("⚖️ Grafik Prediksi Berat per Bay")
+            st.header("⚖️ Grafik Prediksi Berat (VGM) per Bay")
             create_weight_chart(comparison_df)
 
         else:
