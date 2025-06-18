@@ -91,14 +91,14 @@ def compare_pivots(df1, df2, name1, name2):
         left_index=True,
         right_index=True,
         how='outer',
-        suffixes=(f'_{name1}', f'_{name2}')
+        suffixes=(f' ({name1})', f' ({name2})')
     )
     # Mengisi data kosong dengan 0
     merged_df = merged_df.fillna(0)
 
     # Mengubah tipe data jumlah kontainer menjadi integer
-    col1_name = f'Jumlah Kontainer_{name1}'
-    col2_name = f'Jumlah Kontainer_{name2}'
+    col1_name = f'Jumlah Kontainer ({name1})'
+    col2_name = f'Jumlah Kontainer ({name2})'
     merged_df[col1_name] = merged_df[col1_name].astype(int)
     merged_df[col2_name] = merged_df[col2_name].astype(int)
 
@@ -109,13 +109,13 @@ def compare_pivots(df1, df2, name1, name2):
         if row['Perbedaan'] == 0:
             return "Sama Persis"
         elif row[col1_name] == 0:
-            return f"Baru di {name2}"
+            return f"Baru"
         elif row[col2_name] == 0:
-            return f"Hilang di {name2}"
+            return f"Hilang"
         elif row['Perbedaan'] > 0:
-            return f"Bertambah di {name2}"
+            return f"Bertambah"
         else:
-            return f"Berkurang di {name2}"
+            return f"Berkurang"
 
     merged_df['Status'] = merged_df.apply(get_status, axis=1)
     
@@ -127,15 +127,15 @@ def compare_pivots(df1, df2, name1, name2):
     return merged_df.reset_index(), similarity_score
 
 
-def create_summary_table(pivots, file_names):
+def create_summary_table(pivots_dict):
     """
-    Membuat tabel ringkasan jumlah kontainer per POD dari beberapa pivot table.
+    Membuat tabel ringkasan jumlah kontainer per POD dari dictionary pivot table.
     """
     summaries = []
-    for i, pivot in enumerate(pivots):
+    for file_name, pivot in pivots_dict.items():
         if not pivot.empty:
             summary = pivot.groupby("Port of Discharge")["Jumlah Kontainer"].sum().reset_index()
-            summary = summary.rename(columns={"Jumlah Kontainer": file_names[i]})
+            summary = summary.rename(columns={"Jumlah Kontainer": file_name})
             summary = summary.set_index("Port of Discharge")
             summaries.append(summary)
             
@@ -156,58 +156,59 @@ def create_summary_table(pivots, file_names):
 # --- TAMPILAN APLIKASI STREAMLIT ---
 
 st.title("🚢 EDI File Comparator")
-st.caption("Unggah 3 file EDI untuk membandingkan komposisi Bay, POD, dan jumlah kontainer.")
+st.caption("Unggah 2 file EDI atau lebih untuk membandingkan komposisi Bay, POD, dan jumlah kontainer.")
 
 uploaded_files = st.file_uploader(
-    "Upload 3 file .EDI di sini",
+    "Upload file .EDI Anda di sini",
     type=["edi", "txt"],
     accept_multiple_files=True
 )
 
-if len(uploaded_files) != 3:
-    st.info("ℹ️ Silakan unggah tepat 3 file untuk memulai perbandingan.")
+if len(uploaded_files) < 2:
+    st.info("ℹ️ Silakan unggah minimal 2 file untuk memulai perbandingan.")
 else:
-    st.success("✅ 3 file berhasil diunggah. Memproses perbandingan...")
-
     # Memproses setiap file yang diunggah
     with st.spinner("Menganalisis file..."):
-        pivots = [parse_edi_to_pivot(f) for f in uploaded_files]
+        pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files}
 
-    file_names = [f.name for f in uploaded_files]
-    
     # --- MENAMPILKAN RINGKASAN ---
     st.header("📊 Ringkasan Total Kontainer per Port of Discharge")
-    summary_table = create_summary_table(pivots, file_names)
+    summary_table = create_summary_table(pivots_dict)
     
     if not summary_table.empty:
         st.dataframe(summary_table, use_container_width=True)
     else:
         st.warning("Tidak ada data valid untuk membuat ringkasan.")
         
-    st.markdown("---") # Garis pemisah
+    st.markdown("---")
 
-    # --- MENAMPILKAN PERBANDINGAN DETAIL ---
+    # --- UI UNTUK MEMILIH FILE YANG AKAN DIBANDINGKAN ---
     st.header(f"🔍 Perbandingan Detail")
-
-    # Kolom untuk perbandingan 1 vs 2 dan 2 vs 3
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader(f"`{file_names[0]}` vs `{file_names[1]}`")
-        comparison_1_2, score_1_2 = compare_pivots(pivots[0], pivots[1], "File1", "File2")
-        
-        if not comparison_1_2.empty:
-            st.metric(label="Tingkat Kesamaan (Bay, POD & Jumlah)", value=f"{score_1_2:.2f} %")
-            st.dataframe(comparison_1_2)
-        else:
-            st.warning("Tidak dapat membandingkan file 1 dan 2. Pastikan kedua file valid dan berisi data dari POL 'IDJKT'.")
     
+    file_names = list(pivots_dict.keys())
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        file_a = st.selectbox("Pilih file pertama (A):", file_names, index=0)
     with col2:
-        st.subheader(f"`{file_names[1]}` vs `{file_names[2]}`")
-        comparison_2_3, score_2_3 = compare_pivots(pivots[1], pivots[2], "File2", "File3")
+        # Membuat daftar pilihan untuk file kedua yang tidak sama dengan file pertama
+        options_b = [name for name in file_names if name != file_a]
+        if not options_b:
+            st.warning("Hanya ada satu file, tidak bisa membandingkan.")
+            st.stop()
+        file_b = st.selectbox("Pilih file kedua (B):", options_b, index=0)
 
-        if not comparison_2_3.empty:
-            st.metric(label="Tingkat Kesamaan (Bay, POD & Jumlah)", value=f"{score_2_3:.2f} %")
-            st.dataframe(comparison_2_3)
+    # --- MENAMPILKAN HASIL PERBANDINGAN BERDASARKAN PILIHAN ---
+    if file_a and file_b:
+        pivot_a = pivots_dict[file_a]
+        pivot_b = pivots_dict[file_b]
+        
+        comparison_df, score = compare_pivots(pivot_a, pivot_b, file_a, file_b)
+        
+        st.subheader(f"Hasil: `{file_a}` vs `{file_b}`")
+        if not comparison_df.empty:
+            st.metric(label="Tingkat Kesamaan (Bay, POD & Jumlah)", value=f"{score:.2f} %")
+            st.dataframe(comparison_df)
         else:
-            st.warning("Tidak dapat membandingkan file 2 dan 3. Pastikan kedua file valid dan berisi data dari POL 'IDJKT'.")
+            st.warning(f"Tidak dapat membandingkan `{file_a}` dan `{file_b}`. Pastikan kedua file valid dan berisi data dari POL 'IDJKT'.")
+
