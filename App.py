@@ -23,10 +23,11 @@ if uploaded_file is not None:
             current_bay = None
             current_pod = None
         elif line.startswith("LOC+147+"):
-            current_bay = line.split("+")[2].split(":")[0]
+            full_bay = line.split("+")[2].split(":")[0]
+            current_bay = full_bay[1:3]  # Ambil dua digit setelah leading zero
         elif line.startswith("LOC+11+"):
             current_pod = line.split("+")[2].split(":")[0]
-        
+
         if current_bay and current_pod:
             records.append({
                 "Bay": current_bay,
@@ -41,14 +42,14 @@ if uploaded_file is not None:
         st.subheader("📊 Tabel Kontainer")
         st.dataframe(df)
 
-        st.subheader("🔁 Pivot: Jumlah Kontainer per Bay & Port")
+        st.subheader("🗁 Pivot: Jumlah Kontainer per Bay & Port")
         pivot_df = df.groupby(["Bay", "Port of Discharge"]).size().reset_index(name="Jumlah Kontainer")
         st.dataframe(pivot_df)
 
         # Download sebagai Excel
         output_excel = pivot_df.to_excel(index=False, engine='openpyxl')
         st.download_button(
-            label="📥 Download Excel",
+            label="📅 Download Excel",
             data=output_excel,
             file_name="pivot_bay_pod.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
