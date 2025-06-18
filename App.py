@@ -30,7 +30,8 @@ def parse_edi_to_pivot(uploaded_file):
         if line.startswith("LOC+147+"):
             if current_container_data:
                 all_records.append(current_container_data)
-            current_container_data = {}
+            # Inisialisasi data untuk kontainer baru
+            current_container_data = {'Weight': 0}
             try:
                 full_bay = line.split("+")[2].split(":")[0]
                 current_container_data["Bay"] = full_bay[1:3] if len(full_bay) >= 3 else full_bay
@@ -48,6 +49,14 @@ def parse_edi_to_pivot(uploaded_file):
                 current_container_data["Port of Loading"] = pol.strip().upper().replace("'", "")
             except IndexError:
                 pass
+        # --- BARU: Membaca data berat ---
+        elif line.startswith("MEA+WT++KGM:"):
+            try:
+                weight_str = line.split(':')[-1]
+                current_container_data['Weight'] = pd.to_numeric(weight_str, errors='coerce')
+            except (IndexError, ValueError):
+                pass # Abaikan jika format salah
+
 
     if current_container_data:
         all_records.append(current_container_data)
@@ -64,12 +73,15 @@ def parse_edi_to_pivot(uploaded_file):
         return pd.DataFrame()
         
     df_display = df_filtered.drop(columns=["Port of Loading"]).dropna(subset=["Port of Discharge", "Bay"])
+    df_display['Weight'] = df_display['Weight'].fillna(0)
     
     if df_display.empty:
         return pd.DataFrame()
 
-    # Membuat pivot table
-    pivot_df = df_display.groupby(["Bay", "Port of Discharge"]).size().reset_index(name="Jumlah Kontainer")
+    # --- BARU: Agregasi jumlah dan berat ---
+    pivot_df = df_display.groupby(["Bay", "Port of Discharge"], as_index=False).agg(
+        **{'Jumlah Kontainer': ('Bay', 'size'), 'Total Berat': ('Weight', 'sum')}
+    )
     
     # Pastikan kolom Bay adalah numerik untuk sorting dan clustering
     pivot_df['Bay'] = pd.to_numeric(pivot_df['Bay'], errors='coerce')
@@ -116,9 +128,12 @@ def compare_multiple_pivots(pivots_dict_selected):
     dfs_to_merge = []
     for name, df in pivots_dict_selected.items():
         if not df.empty:
-            # Jadikan Bay dan POD sebagai index dan ganti nama kolom Jumlah Kontainer
+            # Jadikan Bay dan POD sebagai index dan ganti nama kolom
             renamed_df = df.set_index(["Bay", "Port of Discharge"])
-            renamed_df = renamed_df.rename(columns={"Jumlah Kontainer": f"Jumlah ({name})"})
+            renamed_df = renamed_df.rename(columns={
+                "Jumlah Kontainer": f"Jumlah ({name})",
+                "Total Berat": f"Berat ({name})"
+            })
             dfs_to_merge.append(renamed_df)
 
     if not dfs_to_merge:
@@ -128,10 +143,15 @@ def compare_multiple_pivots(pivots_dict_selected):
     merged_df = pd.concat(dfs_to_merge, axis=1, join='outer')
     merged_df = merged_df.fillna(0).astype(int)
 
-    # Menghitung kolom 'Forecast' menggunakan Weighted Moving Average per baris
+    # Menghitung kolom forecast untuk Jumlah dan Berat
     jumlah_cols = [col for col in merged_df.columns if col.startswith('Jumlah')]
+    berat_cols = [col for col in merged_df.columns if col.startswith('Berat')]
+    
     if jumlah_cols:
         merged_df['Forecast (Next Vessel)'] = merged_df[jumlah_cols].apply(forecast_next_value_wma, axis=1).astype(int)
+    if berat_cols:
+        merged_df['Forecast Weight (KGM)'] = merged_df[berat_cols].apply(forecast_next_value_wma, axis=1).astype(int)
+
 
     # Mengurutkan berdasarkan Bay dan mengembalikan ke bentuk tabel datar
     merged_df = merged_df.reset_index()
@@ -148,9 +168,10 @@ def create_summary_table(pivots_dict, detailed_forecast_df):
     summaries = []
     for file_name, pivot in pivots_dict.items():
         if not pivot.empty:
-            summary = pivot.groupby("Port of Discharge")["Jumlah Kontainer"].sum().reset_index()
-            summary = summary.rename(columns={"Jumlah Kontainer": file_name})
-            summary = summary.set_index("Port of Discharge")
+            # --- BARU: Agregasi jumlah dan berat ---
+            summary = pivot.groupby("Port of Discharge").agg(
+                **{f'Jumlah ({file_name})': ('Jumlah Kontainer', 'sum'), f'Berat ({file_name})': ('Total Berat', 'sum')}
+            )
             summaries.append(summary)
             
     if not summaries:
@@ -159,17 +180,21 @@ def create_summary_table(pivots_dict, detailed_forecast_df):
     # Gabungkan semua summary historis
     final_summary = pd.concat(summaries, axis=1).fillna(0).astype(int)
     
-    # --- LOGIKA BARU UNTUK FORECAST ---
     # Hitung forecast per POD dengan menjumlahkan dari perbandingan detail
-    if not detailed_forecast_df.empty and 'Forecast (Next Vessel)' in detailed_forecast_df.columns:
-        forecast_summary = detailed_forecast_df.groupby('Port of Discharge')['Forecast (Next Vessel)'].sum()
-        final_summary['Forecast (Next Vessel)'] = forecast_summary
-        final_summary['Forecast (Next Vessel)'] = final_summary['Forecast (Next Vessel)'].fillna(0).astype(int)
-    
+    if not detailed_forecast_df.empty:
+        if 'Forecast (Next Vessel)' in detailed_forecast_df.columns:
+            forecast_summary_count = detailed_forecast_df.groupby('Port of Discharge')['Forecast (Next Vessel)'].sum()
+            final_summary['Forecast (Next Vessel)'] = forecast_summary_count
+            final_summary['Forecast (Next Vessel)'] = final_summary['Forecast (Next Vessel)'].fillna(0)
+        
+        if 'Forecast Weight (KGM)' in detailed_forecast_df.columns:
+            forecast_summary_weight = detailed_forecast_df.groupby('Port of Discharge')['Forecast Weight (KGM)'].sum()
+            final_summary['Forecast Weight (KGM)'] = forecast_summary_weight
+            final_summary['Forecast Weight (KGM)'] = final_summary['Forecast Weight (KGM)'].fillna(0)
+
     # Tambahkan baris Total
     total_row = final_summary.sum().to_frame().T
     total_row.index = ["**TOTAL**"]
-    # Pastikan tipe data total adalah integer
     final_summary = pd.concat([final_summary, total_row]).astype(int)
     
     return final_summary.reset_index()
@@ -284,6 +309,23 @@ def create_macro_slot_table(comparison_df, num_clusters=6):
 
     return slot_df
 
+# --- FUNGSI BARU UNTUK GRAFIK BERAT ---
+def create_weight_chart(comparison_df):
+    """
+    Membuat dan menampilkan bar chart untuk total prediksi berat per Bay.
+    """
+    if comparison_df.empty or 'Forecast Weight (KGM)' not in comparison_df.columns:
+        st.info("Tidak ada data prediksi berat untuk ditampilkan di grafik.")
+        return
+
+    weight_summary = comparison_df.groupby('Bay')['Forecast Weight (KGM)'].sum()
+    weight_summary = weight_summary[weight_summary > 0] # Hanya tampilkan bay dengan berat
+
+    if not weight_summary.empty:
+        st.bar_chart(weight_summary)
+    else:
+        st.info("Tidak ada data prediksi berat untuk ditampilkan di grafik.")
+
 
 # --- TAMPILAN APLIKASI STREAMLIT ---
 
@@ -321,7 +363,7 @@ else:
         comparison_df = compare_multiple_pivots(pivots_to_compare)
         
         # --- MENAMPILKAN RINGKASAN SETELAH PERBANDINGAN SELESAI ---
-        st.header("📊 Ringkasan Total Kontainer per Port of Discharge")
+        st.header("📊 Ringkasan Total Kontainer & Berat per Port of Discharge")
         # Melewatkan hasil perbandingan ke fungsi ringkasan untuk konsistensi
         summary_table = create_summary_table(pivots_dict, comparison_df)
         
@@ -357,6 +399,11 @@ else:
                     st.dataframe(macro_slot_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
             else:
                 st.info("Tidak ada data forecast untuk membuat tabel alokasi cluster.")
+            
+            # --- BUAT DAN TAMPILKAN GRAFIK BERAT ---
+            st.markdown("---")
+            st.header("⚖️ Grafik Prediksi Berat per Bay")
+            create_weight_chart(comparison_df)
 
         else:
             st.warning(f"Tidak dapat membandingkan file-file yang dipilih. Pastikan file valid dan berisi data dari POL 'IDJKT'.")
