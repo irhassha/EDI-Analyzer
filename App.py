@@ -52,7 +52,8 @@ def parse_edi_to_pivot(uploaded_file):
         # --- PERUBAHAN: Membaca data berat dari VGM ---
         elif line.startswith("MEA+VGM++KGM:"):
             try:
-                weight_str = line.split(':')[-1]
+                # Menghapus apostrof dan karakter non-numerik lainnya sebelum konversi
+                weight_str = line.split(':')[-1].replace("'", "").strip()
                 current_container_data['Weight'] = pd.to_numeric(weight_str, errors='coerce')
             except (IndexError, ValueError):
                 pass # Abaikan jika format salah
