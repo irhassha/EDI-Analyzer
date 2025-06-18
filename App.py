@@ -18,7 +18,7 @@ if uploaded_file is not None:
     inside_container_block = False
 
     def simpan_kalau_lengkap():
-        if current_bay and current_pod and current_pol == "IDJKT":
+        if current_bay is not None and current_pod is not None and current_pol == "IDJKT":
             records.append({
                 "Bay": current_bay,
                 "Port of Discharge": current_pod
