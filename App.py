@@ -13,6 +13,8 @@ def parse_edi_to_pivot(uploaded_file):
     dan mengembalikannya sebagai DataFrame pivot.
     """
     try:
+        # Pindahkan kursor file kembali ke awal setiap kali fungsi ini dipanggil
+        uploaded_file.seek(0)
         content = uploaded_file.read().decode("utf-8")
         lines = content.strip().splitlines()
     except Exception:
@@ -53,7 +55,9 @@ def parse_edi_to_pivot(uploaded_file):
         return pd.DataFrame()
 
     df_all = pd.DataFrame(all_records)
-    df_filtered = df_all[df_all["Port of Loading"] == "IDJKT"].copy()
+    # Filter untuk Port of Loading 'IDJKT' saja
+    df_filtered = df_all.loc[df_all["Port of Loading"] == "IDJKT"].copy()
+
 
     if df_filtered.empty:
         return pd.DataFrame()
@@ -65,7 +69,7 @@ def parse_edi_to_pivot(uploaded_file):
 
     # Membuat pivot table
     pivot_df = df_display.groupby(["Bay", "Port of Discharge"]).size().reset_index(name="Jumlah Kontainer")
-    return pivot_df.set_index(["Bay", "Port of Discharge"])
+    return pivot_df
 
 
 def compare_pivots(df1, df2, name1, name2):
@@ -75,6 +79,10 @@ def compare_pivots(df1, df2, name1, name2):
     """
     if df1.empty or df2.empty:
         return pd.DataFrame(), 0
+
+    # Menjadikan Bay dan POD sebagai index untuk merge
+    df1 = df1.set_index(["Bay", "Port of Discharge"])
+    df2 = df2.set_index(["Bay", "Port of Discharge"])
 
     # Menggabungkan kedua DataFrame untuk perbandingan
     merged_df = pd.merge(
@@ -119,6 +127,32 @@ def compare_pivots(df1, df2, name1, name2):
     return merged_df.reset_index(), similarity_score
 
 
+def create_summary_table(pivots, file_names):
+    """
+    Membuat tabel ringkasan jumlah kontainer per POD dari beberapa pivot table.
+    """
+    summaries = []
+    for i, pivot in enumerate(pivots):
+        if not pivot.empty:
+            summary = pivot.groupby("Port of Discharge")["Jumlah Kontainer"].sum().reset_index()
+            summary = summary.rename(columns={"Jumlah Kontainer": file_names[i]})
+            summary = summary.set_index("Port of Discharge")
+            summaries.append(summary)
+            
+    if not summaries:
+        return pd.DataFrame()
+
+    # Gabungkan semua summary
+    final_summary = pd.concat(summaries, axis=1).fillna(0).astype(int)
+    
+    # Tambahkan baris Total
+    total_row = final_summary.sum().to_frame().T
+    total_row.index = ["**TOTAL**"]
+    final_summary = pd.concat([final_summary, total_row])
+
+    return final_summary.reset_index()
+
+
 # --- TAMPILAN APLIKASI STREAMLIT ---
 
 st.title("🚢 EDI File Comparator")
@@ -137,28 +171,43 @@ else:
 
     # Memproses setiap file yang diunggah
     with st.spinner("Menganalisis file..."):
-        pivot1 = parse_edi_to_pivot(uploaded_files[0])
-        pivot2 = parse_edi_to_pivot(uploaded_files[1])
-        pivot3 = parse_edi_to_pivot(uploaded_files[2])
+        pivots = [parse_edi_to_pivot(f) for f in uploaded_files]
 
     file_names = [f.name for f in uploaded_files]
-
-    # Melakukan dan menampilkan perbandingan
-    st.header(f"Perbandingan: `{file_names[0]}` vs `{file_names[1]}`")
-    comparison_1_2, score_1_2 = compare_pivots(pivot1, pivot2, "File1", "File2")
     
-    if not comparison_1_2.empty:
-        st.metric(label="Tingkat Kesamaan (Bay, POD & Jumlah)", value=f"{score_1_2:.2f} %")
-        st.dataframe(comparison_1_2)
+    # --- MENAMPILKAN RINGKASAN ---
+    st.header("📊 Ringkasan Total Kontainer per Port of Discharge")
+    summary_table = create_summary_table(pivots, file_names)
+    
+    if not summary_table.empty:
+        st.dataframe(summary_table, use_container_width=True)
     else:
-        st.warning("Tidak dapat membandingkan file 1 dan 2. Pastikan kedua file valid dan berisi data dari POL 'IDJKT'.")
+        st.warning("Tidak ada data valid untuk membuat ringkasan.")
+        
+    st.markdown("---") # Garis pemisah
 
-    st.header(f"Perbandingan: `{file_names[1]}` vs `{file_names[2]}`")
-    comparison_2_3, score_2_3 = compare_pivots(pivot2, pivot3, "File2", "File3")
+    # --- MENAMPILKAN PERBANDINGAN DETAIL ---
+    st.header(f"🔍 Perbandingan Detail")
 
-    if not comparison_2_3.empty:
-        st.metric(label="Tingkat Kesamaan (Bay, POD & Jumlah)", value=f"{score_2_3:.2f} %")
-        st.dataframe(comparison_2_3)
-    else:
-        st.warning("Tidak dapat membandingkan file 2 dan 3. Pastikan kedua file valid dan berisi data dari POL 'IDJKT'.")
+    # Kolom untuk perbandingan 1 vs 2 dan 2 vs 3
+    col1, col2 = st.columns(2)
 
+    with col1:
+        st.subheader(f"`{file_names[0]}` vs `{file_names[1]}`")
+        comparison_1_2, score_1_2 = compare_pivots(pivots[0], pivots[1], "File1", "File2")
+        
+        if not comparison_1_2.empty:
+            st.metric(label="Tingkat Kesamaan (Bay, POD & Jumlah)", value=f"{score_1_2:.2f} %")
+            st.dataframe(comparison_1_2)
+        else:
+            st.warning("Tidak dapat membandingkan file 1 dan 2. Pastikan kedua file valid dan berisi data dari POL 'IDJKT'.")
+    
+    with col2:
+        st.subheader(f"`{file_names[1]}` vs `{file_names[2]}`")
+        comparison_2_3, score_2_3 = compare_pivots(pivots[1], pivots[2], "File2", "File3")
+
+        if not comparison_2_3.empty:
+            st.metric(label="Tingkat Kesamaan (Bay, POD & Jumlah)", value=f"{score_2_3:.2f} %")
+            st.dataframe(comparison_2_3)
+        else:
+            st.warning("Tidak dapat membandingkan file 2 dan 3. Pastikan kedua file valid dan berisi data dari POL 'IDJKT'.")
