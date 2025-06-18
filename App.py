@@ -16,25 +16,30 @@ if uploaded_file is not None:
     records = []
     current_bay = None
     current_pod = None
+    current_pol = None
 
     for line in lines:
         line = line.strip()
         if line.startswith("EQD+CN+"):
             current_bay = None
             current_pod = None
+            current_pol = None
         elif line.startswith("LOC+147+"):
             full_bay = line.split("+")[2].split(":")[0]
             current_bay = full_bay[1:3]  # Ambil dua digit setelah leading zero
         elif line.startswith("LOC+11+"):
             current_pod = line.split("+")[2].split(":")[0]
+        elif line.startswith("LOC+9+"):
+            current_pol = line.split("+")[2].split(":")[0]
 
-        if current_bay and current_pod:
+        if current_bay and current_pod and current_pol == "IDJKT":
             records.append({
                 "Bay": current_bay,
                 "Port of Discharge": current_pod
             })
             current_bay = None
             current_pod = None
+            current_pol = None
 
     if records:
         df = pd.DataFrame(records)
@@ -55,4 +60,4 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.warning("❗Tidak ditemukan data LOC+147 dan LOC+11 dalam file.")
+        st.warning("❗Tidak ditemukan data dari Port of Loading IDJKT dengan LOC+147 dan LOC+11 dalam file.")
