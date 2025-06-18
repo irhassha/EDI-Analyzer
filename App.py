@@ -172,42 +172,70 @@ def create_summary_table(pivots_dict):
     
     return final_summary.reset_index()
 
-def create_bay_allocation_table(comparison_df):
+def create_summarized_cluster_table(comparison_df, num_clusters=6):
     """
-    Membuat tabel alokasi forecast per Bay, memisahkan
-    kontainer 20ft (Bay ganjil) dan 40ft (Bay genap).
+    Membuat tabel ringkasan kluster yang memisahkan kontainer 20ft & 40ft
+    dan menampilkannya sebagai persentase dari total forecast per POD.
     """
     if comparison_df.empty or 'Forecast (Next Vessel)' not in comparison_df.columns:
         return pd.DataFrame()
 
-    df = comparison_df[['Bay', 'Port of Discharge', 'Forecast (Next Vessel)']].copy()
-    
-    # Hanya proses baris dengan forecast > 0
-    df = df[df['Forecast (Next Vessel)'] > 0]
-    
+    df = comparison_df.copy()
+    df = df[df['Forecast (Next Vessel)'] > 0] # Hanya proses baris dengan forecast
+
     if df.empty:
         return pd.DataFrame()
 
-    # Tentukan tipe kontainer berdasarkan Bay ganjil/genap
-    # Ganjil = 20, Genap = 40
-    df['Container Type'] = np.where(df['Bay'] % 2 == 0, '40', '20')
+    # Tentukan tipe kontainer berdasarkan Bay ganjil/genap (Ganjil=20, Genap=40)
+    df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
+
+    # Hitung total forecast per POD (ini akan menjadi denominator 100%)
+    # `transform` akan menyiarkan hasil sum ke setiap baris dalam grupnya
+    df['Total Forecast per POD'] = df.groupby('Port of Discharge')['Forecast (Next Vessel)'].transform('sum')
+    
+    # Hindari pembagian dengan nol
+    df.loc[df['Total Forecast per POD'] == 0, 'Total Forecast per POD'] = 1
+    
+    # Hitung persentase alokasi untuk setiap baris
+    df['Percentage'] = (df['Forecast (Next Vessel)'] / df['Total Forecast per POD']) * 100
+
+    # Buat bin/kelompok untuk cluster
+    try:
+        # Menggunakan qcut untuk distribusi yang lebih merata jika memungkinkan
+        df['Cluster ID'] = pd.qcut(df['Bay'], q=num_clusters, labels=False, duplicates='drop')
+    except ValueError:
+        try:
+             # Fallback ke cut jika qcut gagal
+            df['Cluster ID'], bins = pd.cut(df['Bay'], bins=num_clusters, retbins=True, right=True, include_lowest=True, labels=False, duplicates='drop')
+        except ValueError:
+             return pd.DataFrame() # Gagal membuat kluster
+
+    # Buat label rentang yang mudah dibaca dari setiap kluster
+    df['BAY'] = df.groupby('Cluster ID')['Bay'].transform(lambda x: f"{x.min()}-{x.max()}")
     
     # Buat nama kolom tujuan (e.g., 'SGSIN 20')
     df['Allocation Column'] = df['Port of Discharge'] + ' ' + df['Container Type']
-
-    # Lakukan pivot untuk membuat struktur tabel yang diinginkan
-    allocation_pivot = df.pivot_table(
-        index='Bay',
+    
+    # Pivot untuk mendapatkan jumlah persentase per cluster dan alokasi
+    cluster_pivot = df.pivot_table(
+        index=['Cluster ID', 'BAY'],
         columns='Allocation Column',
-        values='Forecast (Next Vessel)',
+        values='Percentage',
         aggfunc='sum',
         fill_value=0
     )
     
-    # Final formatting
-    allocation_pivot = allocation_pivot.reset_index()
-    
-    return allocation_pivot
+    # Format persentase menjadi string
+    for col in cluster_pivot.columns:
+        cluster_pivot[col] = cluster_pivot[col].map('{:.2f}%'.format)
+
+    # Final formatting untuk tabel output
+    cluster_pivot = cluster_pivot.reset_index()
+    cluster_pivot.drop(columns='Cluster ID', inplace=True)
+    cluster_pivot.insert(0, 'CLUSTER', range(1, len(cluster_pivot) + 1))
+
+    return cluster_pivot
+
 
 # --- TAMPILAN APLIKASI STREAMLIT ---
 
@@ -266,13 +294,13 @@ else:
 
             # --- BUAT DAN TAMPILKAN TABEL ALOKASI BAY ---
             st.markdown("---")
-            st.header("🎯 Prediksi Alokasi per Bay (20ft Ganjil / 40ft Genap)")
-            allocation_table = create_bay_allocation_table(comparison_df)
+            st.header("🎯 Ringkasan Prediksi Alokasi per Cluster")
+            cluster_table = create_summarized_cluster_table(comparison_df)
             
-            if not allocation_table.empty:
-                st.dataframe(allocation_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+            if not cluster_table.empty:
+                st.dataframe(cluster_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
             else:
-                st.info("Tidak ada data forecast untuk membuat tabel alokasi bay.")
+                st.info("Tidak ada data forecast untuk membuat tabel alokasi cluster.")
 
         else:
             st.warning(f"Tidak dapat membandingkan file-file yang dipilih. Pastikan file valid dan berisi data dari POL 'IDJKT'.")
