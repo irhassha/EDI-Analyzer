@@ -175,7 +175,7 @@ def create_summary_table(pivots_dict):
 def create_summarized_cluster_table(comparison_df, num_clusters=6):
     """
     Membuat tabel ringkasan kluster yang memisahkan kontainer 20ft & 40ft
-    dan menampilkannya sebagai persentase dari total forecast per POD.
+    dan menampilkannya sebagai jumlah kotak (forecast).
     """
     if comparison_df.empty or 'Forecast (Next Vessel)' not in comparison_df.columns:
         return pd.DataFrame()
@@ -188,16 +188,6 @@ def create_summarized_cluster_table(comparison_df, num_clusters=6):
 
     # Tentukan tipe kontainer berdasarkan Bay ganjil/genap (Ganjil=20, Genap=40)
     df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
-
-    # Hitung total forecast per POD (ini akan menjadi denominator 100%)
-    # `transform` akan menyiarkan hasil sum ke setiap baris dalam grupnya
-    df['Total Forecast per POD'] = df.groupby('Port of Discharge')['Forecast (Next Vessel)'].transform('sum')
-    
-    # Hindari pembagian dengan nol
-    df.loc[df['Total Forecast per POD'] == 0, 'Total Forecast per POD'] = 1
-    
-    # Hitung persentase alokasi untuk setiap baris
-    df['Percentage'] = (df['Forecast (Next Vessel)'] / df['Total Forecast per POD']) * 100
 
     # Buat bin/kelompok untuk cluster
     try:
@@ -216,19 +206,15 @@ def create_summarized_cluster_table(comparison_df, num_clusters=6):
     # Buat nama kolom tujuan (e.g., 'SGSIN 20')
     df['Allocation Column'] = df['Port of Discharge'] + ' ' + df['Container Type']
     
-    # Pivot untuk mendapatkan jumlah persentase per cluster dan alokasi
+    # Pivot untuk mendapatkan jumlah forecast per cluster dan alokasi
     cluster_pivot = df.pivot_table(
         index=['Cluster ID', 'BAY'],
         columns='Allocation Column',
-        values='Percentage',
+        values='Forecast (Next Vessel)', # Langsung menggunakan jumlah forecast
         aggfunc='sum',
         fill_value=0
     )
     
-    # Format persentase menjadi string
-    for col in cluster_pivot.columns:
-        cluster_pivot[col] = cluster_pivot[col].map('{:.2f}%'.format)
-
     # Final formatting untuk tabel output
     cluster_pivot = cluster_pivot.reset_index()
     cluster_pivot.drop(columns='Cluster ID', inplace=True)
@@ -294,7 +280,7 @@ else:
 
             # --- BUAT DAN TAMPILKAN TABEL ALOKASI BAY ---
             st.markdown("---")
-            st.header("🎯 Ringkasan Prediksi Alokasi per Cluster")
+            st.header("🎯 Ringkasan Prediksi Alokasi per Cluster (dalam Box)")
             cluster_table = create_summarized_cluster_table(comparison_df)
             
             if not cluster_table.empty:
