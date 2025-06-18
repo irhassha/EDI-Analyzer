@@ -12,37 +12,62 @@ if uploaded_file is not None:
     lines = content.strip().splitlines()
 
     records = []
-    current_bay = None
-    current_pod = None
-    current_pol = None
+    
+    # Inisialisasi variabel untuk menyimpan data kontainer saat ini
+    current_container_data = {}
 
-    def simpan_kalau_lengkap():
-        if current_bay and current_pod and current_pol == "IDJKT":
+    def process_and_add_record(data_to_process):
+        """Memproses data kontainer yang telah dikumpulkan dan menambahkannya ke records jika lengkap dan sesuai kriteria."""
+        bay = data_to_process.get("bay")
+        pod = data_to_process.get("pod")
+        pol = data_to_process.get("pol")
+
+        # Pastikan semua data ada dan Port of Loading adalah 'IDJKT'
+        if bay and pod and pol == "IDJKT":
             records.append({
-                "Bay": current_bay,
-                "Port of Discharge": current_pod
+                "Bay": bay,
+                "Port of Discharge": pod
             })
 
     for line in lines:
         line = line.strip()
 
+        # Ketika segmen EQD+CN+ ditemukan, ini menandakan awal kontainer baru.
+        # Kita proses data kontainer sebelumnya (jika ada) dan reset untuk yang baru.
         if line.startswith("EQD+CN+"):
-            simpan_kalau_lengkap()
-            current_bay = None
-            current_pod = None
-            current_pol = None
+            if current_container_data: # Jika ada data dari kontainer sebelumnya
+                process_and_add_record(current_container_data)
+            current_container_data = {} # Reset untuk kontainer baru
 
+        # Ekstrak Bay
         elif line.startswith("LOC+147+"):
-            full_bay = line.split("+")[2].split(":")[0]
-            current_bay = full_bay[1:3]
-
+            try:
+                full_bay = line.split("+")[2].split(":")[0]
+                current_container_data["bay"] = full_bay[1:3] # Ambil karakter ke-2 dan ke-3
+            except IndexError:
+                # Handle kasus jika format LOC+147+ tidak sesuai harapan
+                st.warning(f"Format LOC+147+ tidak dikenal: {line}. Melewatkan Bay.")
+                current_container_data["bay"] = None # Pastikan direset jika gagal
+            
+        # Ekstrak Port of Discharge (POD)
         elif line.startswith("LOC+11+"):
-            current_pod = line.split("+")[2].split(":")[0]
+            try:
+                current_container_data["pod"] = line.split("+")[2].split(":")[0]
+            except IndexError:
+                st.warning(f"Format LOC+11+ tidak dikenal: {line}. Melewatkan POD.")
+                current_container_data["pod"] = None
 
+        # Ekstrak Port of Loading (POL)
         elif line.startswith("LOC+9+"):
-            current_pol = line.split("+")[2].split(":")[0]
+            try:
+                current_container_data["pol"] = line.split("+")[2].split(":")[0]
+            except IndexError:
+                st.warning(f"Format LOC+9+ tidak dikenal: {line}. Melewatkan POL.")
+                current_container_data["pol"] = None
 
-    simpan_kalau_lengkap()
+    # Penting: Setelah loop selesai, proses data kontainer terakhir jika ada
+    if current_container_data:
+        process_and_add_record(current_container_data)
 
     if records:
         df = pd.DataFrame(records)
@@ -51,10 +76,19 @@ if uploaded_file is not None:
         st.dataframe(df)
 
         st.subheader("🗁 Pivot: Jumlah Kontainer per Bay & Port")
+        # Menggunakan .value_counts() untuk ringkasan yang lebih cepat, lalu reset_index
+        # atau tetap gunakan groupby seperti sebelumnya, keduanya baik
         pivot_df = df.groupby(["Bay", "Port of Discharge"]).size().reset_index(name="Jumlah Kontainer")
         st.dataframe(pivot_df)
 
-        output_excel = pivot_df.to_excel(index=False, engine='openpyxl')
+        # Ubah data ke format Excel
+        # Menggunakan BytesIO untuk menyimpan file di memori sebelum didownload
+        import io
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            pivot_df.to_excel(writer, index=False, sheet_name='Pivot Data')
+        output_excel = output.getvalue()
+
         st.download_button(
             label="📅 Download Excel",
             data=output_excel,
@@ -62,4 +96,4 @@ if uploaded_file is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
     else:
-        st.warning("❗Tidak ditemukan data dari Port of Loading IDJKT dengan LOC+147 dan LOC+11 dalam file.")
+        st.warning("❗Tidak ditemukan data kontainer yang lengkap dari Port of Loading IDJKT (LOC+9+IDJKT) yang memiliki informasi Bay (LOC+147+) dan Port of Discharge (LOC+11+) dalam file.")
