@@ -79,7 +79,8 @@ def forecast_next_value(series):
     """
     # Membutuhkan minimal 2 titik data untuk membuat tren
     if len(series.dropna()) < 2:
-        return series.mean() # Jika kurang dari 2 data, kembalikan rata-rata
+        # Jika kurang dari 2 data, kembalikan rata-rata
+        return round(series.mean()) if not series.empty else 0
 
     y = series.values
     x = np.arange(len(y))
@@ -89,7 +90,7 @@ def forecast_next_value(series):
         m, b = np.polyfit(x, y, 1)
     except np.linalg.LinAlgError:
         # Jika terjadi error (misal, semua data sama), kembalikan rata-rata
-        return np.mean(y)
+        return round(np.mean(y))
 
     # Memprediksi nilai untuk x berikutnya
     next_x = len(y)
@@ -126,7 +127,7 @@ def compare_multiple_pivots(pivots_dict_selected):
     # Menghitung kolom 'Forecast' menggunakan regresi linear per baris
     jumlah_cols = [col for col in merged_df.columns if col.startswith('Jumlah')]
     if jumlah_cols:
-        merged_df['Forecast (Next Vessel)'] = merged_df[jumlah_cols].apply(forecast_next_value, axis=1)
+        merged_df['Forecast (Next Vessel)'] = merged_df[jumlah_cols].apply(forecast_next_value, axis=1).astype(int)
 
     # Mengurutkan berdasarkan Bay dan mengembalikan ke bentuk tabel datar
     merged_df = merged_df.reset_index()
@@ -137,7 +138,7 @@ def compare_multiple_pivots(pivots_dict_selected):
 
 def create_summary_table(pivots_dict):
     """
-    Membuat tabel ringkasan jumlah kontainer per POD dari dictionary pivot table.
+    Membuat tabel ringkasan dan menambahkan kolom forecast.
     """
     summaries = []
     for file_name, pivot in pivots_dict.items():
@@ -153,11 +154,16 @@ def create_summary_table(pivots_dict):
     # Gabungkan semua summary
     final_summary = pd.concat(summaries, axis=1).fillna(0).astype(int)
     
+    # Hitung forecast untuk setiap POD jika data cukup
+    if len(final_summary.columns) >= 2:
+        final_summary['Forecast (Next Vessel)'] = final_summary.apply(forecast_next_value, axis=1).astype(int)
+    
     # Tambahkan baris Total
     total_row = final_summary.sum().to_frame().T
     total_row.index = ["**TOTAL**"]
-    final_summary = pd.concat([final_summary, total_row])
-
+    # Pastikan tipe data total adalah integer
+    final_summary = pd.concat([final_summary, total_row]).astype(int)
+    
     return final_summary.reset_index()
 
 
@@ -184,7 +190,8 @@ else:
     summary_table = create_summary_table(pivots_dict)
     
     if not summary_table.empty:
-        st.dataframe(summary_table, use_container_width=True)
+        # Menerapkan perataan tengah pada tabel ringkasan
+        st.dataframe(summary_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
     else:
         st.warning("Tidak ada data valid untuk membuat ringkasan.")
         
@@ -212,7 +219,8 @@ else:
         st.subheader(f"Hasil: {title}")
         
         if not comparison_df.empty:
-            st.dataframe(comparison_df)
+            # Menerapkan perataan tengah pada tabel perbandingan
+            st.dataframe(comparison_df.style.set_properties(**{'text-align': 'center'}))
         else:
             st.warning(f"Tidak dapat membandingkan file-file yang dipilih. Pastikan file valid dan berisi data dari POL 'IDJKT'.")
     else:
