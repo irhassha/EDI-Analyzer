@@ -79,31 +79,29 @@ def parse_edi_to_pivot(uploaded_file):
     return pivot_df
 
 
-def forecast_next_value(series):
+def forecast_next_value_wma(series):
     """
-    Memperkirakan nilai berikutnya dalam sebuah series menggunakan regresi linear.
+    Memperkirakan nilai berikutnya menggunakan Weighted Moving Average (WMA).
+    Data yang lebih baru akan memiliki bobot yang lebih besar.
     """
-    # Membutuhkan minimal 2 titik data untuk membuat tren
+    # Membutuhkan minimal 2 titik data untuk membuat prediksi yang berarti
     if len(series.dropna()) < 2:
-        # Jika kurang dari 2 data, kembalikan rata-rata
+        # Jika kurang dari 2 data, kembalikan rata-rata sederhana
         return round(series.mean()) if not series.empty else 0
 
     y = series.values
-    x = np.arange(len(y))
-
-    # Regresi linear untuk menemukan slope (m) dan intercept (b)
+    
+    # Membuat bobot yang meningkat secara linear (1, 2, 3, ..., n)
+    weights = np.arange(1, len(y) + 1)
+    
     try:
-        m, b = np.polyfit(x, y, 1)
-    except np.linalg.LinAlgError:
-        # Jika terjadi error (misal, semua data sama), kembalikan rata-rata
-        return round(np.mean(y))
-
-    # Memprediksi nilai untuk x berikutnya
-    next_x = len(y)
-    forecast = m * next_x + b
+        # Menghitung rata-rata tertimbang
+        weighted_avg = np.average(y, weights=weights)
+    except ZeroDivisionError:
+        return round(np.mean(y)) # Fallback jika total bobot adalah nol
 
     # Forecast tidak boleh negatif dan harus integer
-    return max(0, round(forecast))
+    return max(0, round(weighted_avg))
 
 
 def compare_multiple_pivots(pivots_dict_selected):
@@ -130,10 +128,10 @@ def compare_multiple_pivots(pivots_dict_selected):
     merged_df = pd.concat(dfs_to_merge, axis=1, join='outer')
     merged_df = merged_df.fillna(0).astype(int)
 
-    # Menghitung kolom 'Forecast' menggunakan regresi linear per baris
+    # Menghitung kolom 'Forecast' menggunakan Weighted Moving Average per baris
     jumlah_cols = [col for col in merged_df.columns if col.startswith('Jumlah')]
     if jumlah_cols:
-        merged_df['Forecast (Next Vessel)'] = merged_df[jumlah_cols].apply(forecast_next_value, axis=1).astype(int)
+        merged_df['Forecast (Next Vessel)'] = merged_df[jumlah_cols].apply(forecast_next_value_wma, axis=1).astype(int)
 
     # Mengurutkan berdasarkan Bay dan mengembalikan ke bentuk tabel datar
     merged_df = merged_df.reset_index()
