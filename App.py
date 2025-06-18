@@ -1,77 +1,192 @@
 import streamlit as st
 import pandas as pd
+import io
 
-st.set_page_config(page_title="EDI Bay/POD Parser", layout="centered")
+# Konfigurasi halaman Streamlit
+st.set_page_config(page_title="EDI File Comparator", layout="wide")
 
-st.title("📦 EDI Container Bay & POD Analyzer")
+# --- FUNGSI UTAMA ---
 
-uploaded_file = st.file_uploader("Upload file .EDI", type=["edi", "txt"])
+def parse_edi_to_pivot(uploaded_file):
+    """
+    Fungsi ini mengambil file EDI yang diunggah, mem-parsingnya,
+    dan mengembalikannya sebagai DataFrame pivot.
+    """
+    try:
+        # Pindahkan kursor file kembali ke awal setiap kali fungsi ini dipanggil
+        uploaded_file.seek(0)
+        content = uploaded_file.read().decode("utf-8")
+        lines = content.strip().splitlines()
+    except Exception:
+        # Jika file tidak bisa dibaca, kembalikan DataFrame kosong
+        return pd.DataFrame()
 
-if uploaded_file is not None:
-    content = uploaded_file.read().decode("utf-8")
-    lines = content.strip().splitlines()
-
-    records = []
-    current_bay = None
-    current_pod = None
-    current_pol = None
-    inside_container_block = False
-
-    def simpan_kalau_lengkap():
-        if current_bay is not None and current_pod is not None and current_pol == "IDJKT":
-            records.append({
-                "Bay": current_bay,
-                "Port of Discharge": current_pod
-            })
+    all_records = []
+    current_container_data = {}
 
     for line in lines:
         line = line.strip()
-
         if line.startswith("LOC+147+"):
-            # Awal blok kontainer
-            simpan_kalau_lengkap()
-            current_bay = None
-            current_pod = None
-            current_pol = None
-            inside_container_block = True
-            full_bay = line.split("+")[2].split(":")[0]
-            current_bay = full_bay[1:3]
+            if current_container_data:
+                all_records.append(current_container_data)
+            current_container_data = {}
+            try:
+                full_bay = line.split("+")[2].split(":")[0]
+                current_container_data["Bay"] = full_bay[1:3] if len(full_bay) >= 3 else full_bay
+            except IndexError:
+                current_container_data["Bay"] = None
+        elif line.startswith("LOC+11+"):
+            try:
+                pod = line.split("+")[2].split(":")[0]
+                current_container_data["Port of Discharge"] = pod.replace("'", "")
+            except IndexError:
+                pass
+        elif line.startswith("LOC+9+"):
+            try:
+                pol = line.split("+")[2].split(":")[0]
+                current_container_data["Port of Loading"] = pol.strip().upper().replace("'", "")
+            except IndexError:
+                pass
 
-        elif inside_container_block and line.startswith("LOC+11+"):
-            current_pod = line.split("+")[2].split(":")[0]
+    if current_container_data:
+        all_records.append(current_container_data)
 
-        elif inside_container_block and line.startswith("LOC+9+"):
-            current_pol = line.split("+")[2].split(":")[0]
+    if not all_records:
+        return pd.DataFrame()
 
-        elif inside_container_block and line.startswith("NAD+"):
-            # Akhir blok kontainer
-            simpan_kalau_lengkap()
-            current_bay = None
-            current_pod = None
-            current_pol = None
-            inside_container_block = False
+    df_all = pd.DataFrame(all_records)
+    # Filter untuk Port of Loading 'IDJKT' saja
+    df_filtered = df_all.loc[df_all["Port of Loading"] == "IDJKT"].copy()
 
-    # Simpan terakhir jika belum tertutup
-    simpan_kalau_lengkap()
 
-    if records:
-        df = pd.DataFrame(records)
+    if df_filtered.empty:
+        return pd.DataFrame()
+        
+    df_display = df_filtered.drop(columns=["Port of Loading"]).dropna(subset=["Port of Discharge", "Bay"])
+    
+    if df_display.empty:
+        return pd.DataFrame()
 
-        st.subheader("📊 Tabel Kontainer")
-        st.dataframe(df.sort_values(by=["Bay"]))
+    # Membuat pivot table
+    pivot_df = df_display.groupby(["Bay", "Port of Discharge"]).size().reset_index(name="Jumlah Kontainer")
+    return pivot_df
 
-        st.subheader("🗁 Pivot: Jumlah Kontainer per Bay & Port")
-        pivot_df = df.groupby(["Bay", "Port of Discharge"]).size().reset_index(name="Jumlah Kontainer")
-        pivot_df = pivot_df.sort_values(by=["Bay"])
-        pivot_df["Status"] = pivot_df["Jumlah Kontainer"].mean().round(2)
-        st.dataframe(pivot_df)
 
-        output_excel = pivot_df.to_excel(index=False, engine='openpyxl')
-        st.download_button(
-            label="📅 Download Excel",
-            data=output_excel,
-            file_name="pivot_bay_pod.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+def compare_multiple_pivots(pivots_dict_selected):
+    """
+    Fungsi ini membandingkan beberapa DataFrame pivot yang dipilih dan 
+    mengembalikan DataFrame perbandingan gabungan yang sudah diurutkan.
+    """
+    if not pivots_dict_selected or len(pivots_dict_selected) < 2:
+        return pd.DataFrame()
+
+    # Mempersiapkan setiap DataFrame untuk digabungkan
+    dfs_to_merge = []
+    for name, df in pivots_dict_selected.items():
+        if not df.empty:
+            # Jadikan Bay dan POD sebagai index dan ganti nama kolom Jumlah Kontainer
+            renamed_df = df.set_index(["Bay", "Port of Discharge"])
+            renamed_df = renamed_df.rename(columns={"Jumlah Kontainer": f"Jumlah ({name})"})
+            dfs_to_merge.append(renamed_df)
+
+    if not dfs_to_merge:
+        return pd.DataFrame()
+
+    # Menggabungkan semua DataFrame dengan outer join
+    merged_df = pd.concat(dfs_to_merge, axis=1, join='outer')
+    merged_df = merged_df.fillna(0).astype(int)
+
+    # Menghitung kolom 'Average' dari semua kolom jumlah
+    jumlah_cols = [col for col in merged_df.columns if col.startswith('Jumlah')]
+    if jumlah_cols:
+        merged_df['Average'] = merged_df[jumlah_cols].mean(axis=1).round(2)
+
+    # Mengurutkan berdasarkan Bay dan mengembalikan ke bentuk tabel datar
+    merged_df = merged_df.reset_index()
+    merged_df = merged_df.sort_values(by="Bay").reset_index(drop=True)
+
+    return merged_df
+
+
+def create_summary_table(pivots_dict):
+    """
+    Membuat tabel ringkasan jumlah kontainer per POD dari dictionary pivot table.
+    """
+    summaries = []
+    for file_name, pivot in pivots_dict.items():
+        if not pivot.empty:
+            summary = pivot.groupby("Port of Discharge")["Jumlah Kontainer"].sum().reset_index()
+            summary = summary.rename(columns={"Jumlah Kontainer": file_name})
+            summary = summary.set_index("Port of Discharge")
+            summaries.append(summary)
+            
+    if not summaries:
+        return pd.DataFrame()
+
+    # Gabungkan semua summary
+    final_summary = pd.concat(summaries, axis=1).fillna(0).astype(int)
+    
+    # Tambahkan baris Total
+    total_row = final_summary.sum().to_frame().T
+    total_row.index = ["**TOTAL**"]
+    final_summary = pd.concat([final_summary, total_row])
+
+    return final_summary.reset_index()
+
+
+# --- TAMPILAN APLIKASI STREAMLIT ---
+
+st.title("🚢 EDI File Comparator")
+st.caption("Unggah 2 file EDI atau lebih untuk membandingkan komposisi Bay, POD, dan jumlah kontainer.")
+
+uploaded_files = st.file_uploader(
+    "Upload file .EDI Anda di sini",
+    type=["edi", "txt"],
+    accept_multiple_files=True
+)
+
+if len(uploaded_files) < 2:
+    st.info("ℹ️ Silakan unggah minimal 2 file untuk memulai perbandingan.")
+else:
+    # Memproses setiap file yang diunggah
+    with st.spinner("Menganalisis file..."):
+        pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files}
+
+    # --- MENAMPILKAN RINGKASAN ---
+    st.header("📊 Ringkasan Total Kontainer per Port of Discharge")
+    summary_table = create_summary_table(pivots_dict)
+    
+    if not summary_table.empty:
+        st.dataframe(summary_table, use_container_width=True)
     else:
-        st.warning("❗Tidak ditemukan data dari Port of Loading IDJKT dengan LOC+147 dan LOC+11 dalam file.")
+        st.warning("Tidak ada data valid untuk membuat ringkasan.")
+        
+    st.markdown("---")
+
+    # --- UI UNTUK MEMILIH FILE YANG AKAN DIBANDINGKAN ---
+    st.header(f"🔍 Perbandingan Detail")
+    
+    file_names = list(pivots_dict.keys())
+    
+    selected_files = st.multiselect(
+        "Pilih 2 file atau lebih untuk dibandingkan:",
+        options=file_names,
+        default=file_names  # Defaultnya memilih semua file
+    )
+
+    # --- MENAMPILKAN HASIL PERBANDINGAN BERDASARKAN PILIHAN ---
+    if len(selected_files) >= 2:
+        pivots_to_compare = {name: pivots_dict[name] for name in selected_files}
+        
+        comparison_df = compare_multiple_pivots(pivots_to_compare)
+        
+        # Membuat judul dinamis
+        title = " vs ".join([f"`{name}`" for name in selected_files])
+        st.subheader(f"Hasil: {title}")
+        
+        if not comparison_df.empty:
+            st.dataframe(comparison_df)
+        else:
+            st.warning(f"Tidak dapat membandingkan file-file yang dipilih. Pastikan file valid dan berisi data dari POL 'IDJKT'.")
+    else:
+        st.warning("Silakan pilih minimal 2 file untuk ditampilkan perbandingannya.")
