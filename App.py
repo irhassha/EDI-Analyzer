@@ -222,6 +222,66 @@ def create_summarized_cluster_table(comparison_df, num_clusters=6):
 
     return cluster_pivot
 
+def create_macro_slot_table(comparison_df, num_clusters=6):
+    """
+    Membuat tabel kebutuhan slot makro berdasarkan forecast.
+    """
+    if comparison_df.empty or 'Forecast (Next Vessel)' not in comparison_df.columns:
+        return pd.DataFrame()
+
+    df = comparison_df.copy()
+    df = df[df['Forecast (Next Vessel)'] > 0]
+
+    if df.empty:
+        return pd.DataFrame()
+
+    # Tentukan tipe kontainer berdasarkan Bay ganjil/genap
+    df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
+
+    # Buat bin/kelompok untuk cluster
+    try:
+        df['Cluster ID'] = pd.qcut(df['Bay'], q=num_clusters, labels=False, duplicates='drop')
+    except ValueError:
+        try:
+            df['Cluster ID'], bins = pd.cut(df['Bay'], bins=num_clusters, retbins=True, right=True, include_lowest=True, labels=False, duplicates='drop')
+        except ValueError:
+            return pd.DataFrame()
+
+    # Buat label rentang yang mudah dibaca
+    df['BAY'] = df.groupby('Cluster ID')['Bay'].transform(lambda x: f"{x.min()}-{x.max()}")
+    
+    # Buat nama kolom tujuan
+    df['Allocation Column'] = df['Port of Discharge'] + ' ' + df['Container Type']
+    
+    # Pivot untuk mendapatkan jumlah forecast per cluster dan alokasi
+    cluster_pivot = df.pivot_table(
+        index=['Cluster ID', 'BAY'],
+        columns='Allocation Column',
+        values='Forecast (Next Vessel)',
+        aggfunc='sum',
+        fill_value=0
+    )
+
+    # --- INI BAGIAN BARU: KALKULASI SLOT ---
+    slot_df = cluster_pivot.copy()
+    for col in slot_df.columns:
+        if ' 20' in col:
+            # Slot need untuk 20ft adalah boxes/30, dibulatkan ke atas
+            slot_df[col] = np.ceil(slot_df[col] / 30)
+        elif ' 40' in col:
+            # Slot need untuk 40ft adalah (boxes/30, dibulatkan ke atas) * 2
+            slot_df[col] = np.ceil(slot_df[col] / 30) * 2
+    
+    # Hitung total slot needs per cluster
+    slot_df['Total Slot Needs'] = slot_df.sum(axis=1)
+
+    # Final formatting
+    slot_df = slot_df.astype(int).reset_index()
+    slot_df.drop(columns='Cluster ID', inplace=True)
+    slot_df.insert(0, 'CLUSTER', range(1, len(slot_df) + 1))
+
+    return slot_df
+
 
 # --- TAMPILAN APLIKASI STREAMLIT ---
 
@@ -278,13 +338,20 @@ else:
             # Menerapkan perataan tengah pada tabel perbandingan
             st.dataframe(comparison_df.style.set_properties(**{'text-align': 'center'}))
 
-            # --- BUAT DAN TAMPILKAN TABEL ALOKASI BAY ---
+            # --- BUAT DAN TAMPILKAN TABEL ALOKASI CLUSTER ---
             st.markdown("---")
             st.header("🎯 Ringkasan Prediksi Alokasi per Cluster (dalam Box)")
             cluster_table = create_summarized_cluster_table(comparison_df)
             
             if not cluster_table.empty:
                 st.dataframe(cluster_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+
+                # --- BUAT DAN TAMPILKAN TABEL MACRO SLOT NEEDS ---
+                st.markdown("---")
+                st.header("⚙️ Macro Slot Needs")
+                macro_slot_table = create_macro_slot_table(comparison_df)
+                if not macro_slot_table.empty:
+                    st.dataframe(macro_slot_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
             else:
                 st.info("Tidak ada data forecast untuk membuat tabel alokasi cluster.")
 
