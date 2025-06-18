@@ -72,58 +72,43 @@ def parse_edi_to_pivot(uploaded_file):
     return pivot_df
 
 
-def compare_pivots(df1, df2, name1, name2):
+def compare_multiple_pivots(pivots_dict_selected):
     """
-    Fungsi ini membandingkan dua DataFrame pivot dan mengembalikan
-    DataFrame perbandingan beserta skor kesamaan.
+    Fungsi ini membandingkan beberapa DataFrame pivot yang dipilih dan 
+    mengembalikan DataFrame perbandingan gabungan.
     """
-    if df1.empty or df2.empty:
+    if not pivots_dict_selected or len(pivots_dict_selected) < 2:
         return pd.DataFrame(), 0
 
-    # Menjadikan Bay dan POD sebagai index untuk merge
-    df1 = df1.set_index(["Bay", "Port of Discharge"])
-    df2 = df2.set_index(["Bay", "Port of Discharge"])
+    # Mempersiapkan setiap DataFrame untuk digabungkan
+    dfs_to_merge = []
+    for name, df in pivots_dict_selected.items():
+        if not df.empty:
+            # Jadikan Bay dan POD sebagai index dan ganti nama kolom Jumlah Kontainer
+            renamed_df = df.set_index(["Bay", "Port of Discharge"])
+            renamed_df = renamed_df.rename(columns={"Jumlah Kontainer": f"Jumlah ({name})"})
+            dfs_to_merge.append(renamed_df)
 
-    # Menggabungkan kedua DataFrame untuk perbandingan
-    merged_df = pd.merge(
-        df1,
-        df2,
-        left_index=True,
-        right_index=True,
-        how='outer',
-        suffixes=(f' ({name1})', f' ({name2})')
-    )
-    # Mengisi data kosong dengan 0
-    merged_df = merged_df.fillna(0)
+    if not dfs_to_merge:
+        return pd.DataFrame(), 0
 
-    # Mengubah tipe data jumlah kontainer menjadi integer
-    col1_name = f'Jumlah Kontainer ({name1})'
-    col2_name = f'Jumlah Kontainer ({name2})'
-    merged_df[col1_name] = merged_df[col1_name].astype(int)
-    merged_df[col2_name] = merged_df[col2_name].astype(int)
+    # Menggabungkan semua DataFrame dengan outer join
+    merged_df = pd.concat(dfs_to_merge, axis=1, join='outer')
+    merged_df = merged_df.fillna(0).astype(int)
 
-    # Menghitung perbedaan dan status
-    merged_df['Perbedaan'] = merged_df[col2_name] - merged_df[col1_name]
-
-    def get_status(row):
-        if row['Perbedaan'] == 0:
-            return "Sama Persis"
-        elif row[col1_name] == 0:
-            return f"Baru"
-        elif row[col2_name] == 0:
-            return f"Hilang"
-        elif row['Perbedaan'] > 0:
-            return f"Bertambah"
-        else:
-            return f"Berkurang"
-
-    merged_df['Status'] = merged_df.apply(get_status, axis=1)
+    # Menghitung status per baris
+    jumlah_cols = [col for col in merged_df.columns if col.startswith('Jumlah')]
+    # Jika jumlah nilai unik di satu baris adalah 1, berarti semua nilainya sama
+    is_identical = merged_df[jumlah_cols].nunique(axis=1) == 1
     
+    merged_df['Status'] = "Bervariasi"
+    merged_df.loc[is_identical, 'Status'] = "Sama Persis"
+
     # Menghitung skor kesamaan
-    total_combinations = len(merged_df)
-    identical_combinations = len(merged_df[merged_df['Status'] == 'Sama Persis'])
-    similarity_score = (identical_combinations / total_combinations) * 100 if total_combinations > 0 else 0
-    
+    total_rows = len(merged_df)
+    identical_rows = is_identical.sum()
+    similarity_score = (identical_rows / total_rows) * 100 if total_rows > 0 else 0
+
     return merged_df.reset_index(), similarity_score
 
 
@@ -187,28 +172,27 @@ else:
     
     file_names = list(pivots_dict.keys())
     
-    col1, col2 = st.columns(2)
-    with col1:
-        file_a = st.selectbox("Pilih file pertama (A):", file_names, index=0)
-    with col2:
-        # Membuat daftar pilihan untuk file kedua yang tidak sama dengan file pertama
-        options_b = [name for name in file_names if name != file_a]
-        if not options_b:
-            st.warning("Hanya ada satu file, tidak bisa membandingkan.")
-            st.stop()
-        file_b = st.selectbox("Pilih file kedua (B):", options_b, index=0)
+    selected_files = st.multiselect(
+        "Pilih 2 file atau lebih untuk dibandingkan:",
+        options=file_names,
+        default=file_names  # Defaultnya memilih semua file
+    )
 
     # --- MENAMPILKAN HASIL PERBANDINGAN BERDASARKAN PILIHAN ---
-    if file_a and file_b:
-        pivot_a = pivots_dict[file_a]
-        pivot_b = pivots_dict[file_b]
+    if len(selected_files) >= 2:
+        pivots_to_compare = {name: pivots_dict[name] for name in selected_files}
         
-        comparison_df, score = compare_pivots(pivot_a, pivot_b, file_a, file_b)
+        comparison_df, score = compare_multiple_pivots(pivots_to_compare)
         
-        st.subheader(f"Hasil: `{file_a}` vs `{file_b}`")
+        # Membuat judul dinamis
+        title = " vs ".join([f"`{name}`" for name in selected_files])
+        st.subheader(f"Hasil: {title}")
+        
         if not comparison_df.empty:
             st.metric(label="Tingkat Kesamaan (Bay, POD & Jumlah)", value=f"{score:.2f} %")
             st.dataframe(comparison_df)
         else:
-            st.warning(f"Tidak dapat membandingkan `{file_a}` dan `{file_b}`. Pastikan kedua file valid dan berisi data dari POL 'IDJKT'.")
+            st.warning(f"Tidak dapat membandingkan file-file yang dipilih. Pastikan file valid dan berisi data dari POL 'IDJKT'.")
+    else:
+        st.warning("Silakan pilih minimal 2 file untuk ditampilkan perbandingannya.")
 
