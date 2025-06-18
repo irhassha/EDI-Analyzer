@@ -23,10 +23,10 @@ if uploaded_file is not None:
         line = line.strip()
 
         if line.startswith("EQD+CN+"):
+            inside_container = True
             current_bay = None
             current_pod = None
             current_pol = None
-            inside_container = True
 
         elif inside_container and line.startswith("LOC+147+"):
             full_bay = line.split("+")[2].split(":")[0]
@@ -38,15 +38,17 @@ if uploaded_file is not None:
         elif inside_container and line.startswith("LOC+9+"):
             current_pol = line.split("+")[2].split(":")[0]
 
-        if current_bay and current_pod and current_pol == "IDJKT":
-            records.append({
-                "Bay": current_bay,
-                "Port of Discharge": current_pod
-            })
+        # Tambahkan jika ketiganya sudah lengkap
+        if inside_container and current_bay and current_pod and current_pol:
+            if current_pol == "IDJKT":
+                records.append({
+                    "Bay": current_bay,
+                    "Port of Discharge": current_pod
+                })
+            inside_container = False
             current_bay = None
             current_pod = None
             current_pol = None
-            inside_container = False
 
     if records:
         df = pd.DataFrame(records)
