@@ -142,9 +142,10 @@ def compare_multiple_pivots(pivots_dict_selected):
     return merged_df
 
 
-def create_summary_table(pivots_dict):
+def create_summary_table(pivots_dict, detailed_forecast_df):
     """
-    Membuat tabel ringkasan dan menambahkan kolom forecast.
+    Membuat tabel ringkasan. Kolom forecast sekarang dijumlahkan dari
+    tabel perbandingan detail untuk konsistensi.
     """
     summaries = []
     for file_name, pivot in pivots_dict.items():
@@ -157,12 +158,15 @@ def create_summary_table(pivots_dict):
     if not summaries:
         return pd.DataFrame()
 
-    # Gabungkan semua summary
+    # Gabungkan semua summary historis
     final_summary = pd.concat(summaries, axis=1).fillna(0).astype(int)
     
-    # Hitung forecast untuk setiap POD jika data cukup
-    if len(final_summary.columns) >= 2:
-        final_summary['Forecast (Next Vessel)'] = final_summary.apply(forecast_next_value, axis=1).astype(int)
+    # --- LOGIKA BARU UNTUK FORECAST ---
+    # Hitung forecast per POD dengan menjumlahkan dari perbandingan detail
+    if not detailed_forecast_df.empty and 'Forecast (Next Vessel)' in detailed_forecast_df.columns:
+        forecast_summary = detailed_forecast_df.groupby('Port of Discharge')['Forecast (Next Vessel)'].sum()
+        final_summary['Forecast (Next Vessel)'] = forecast_summary
+        final_summary['Forecast (Next Vessel)'] = final_summary['Forecast (Next Vessel)'].fillna(0).astype(int)
     
     # Tambahkan baris Total
     total_row = final_summary.sum().to_frame().T
@@ -301,18 +305,6 @@ else:
     with st.spinner("Menganalisis file..."):
         pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files}
 
-    # --- MENAMPILKAN RINGKASAN ---
-    st.header("📊 Ringkasan Total Kontainer per Port of Discharge")
-    summary_table = create_summary_table(pivots_dict)
-    
-    if not summary_table.empty:
-        # Menerapkan perataan tengah pada tabel ringkasan
-        st.dataframe(summary_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
-    else:
-        st.warning("Tidak ada data valid untuk membuat ringkasan.")
-        
-    st.markdown("---")
-
     # --- UI UNTUK MEMILIH FILE YANG AKAN DIBANDINGKAN ---
     st.header(f"🔍 Perbandingan Detail & Prediksi")
     
@@ -330,9 +322,22 @@ else:
         
         comparison_df = compare_multiple_pivots(pivots_to_compare)
         
+        # --- MENAMPILKAN RINGKASAN SETELAH PERBANDINGAN SELESAI ---
+        st.header("📊 Ringkasan Total Kontainer per Port of Discharge")
+        # Melewatkan hasil perbandingan ke fungsi ringkasan untuk konsistensi
+        summary_table = create_summary_table(pivots_dict, comparison_df)
+        
+        if not summary_table.empty:
+            # Menerapkan perataan tengah pada tabel ringkasan
+            st.dataframe(summary_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+        else:
+            st.warning("Tidak ada data valid untuk membuat ringkasan.")
+            
+        st.markdown("---")
+
         # Membuat judul dinamis
         title = " vs ".join([f"`{name}`" for name in selected_files])
-        st.subheader(f"Hasil: {title}")
+        st.subheader(f"Hasil Perbandingan Detail & Prediksi: {title}")
         
         if not comparison_df.empty:
             # Menerapkan perataan tengah pada tabel perbandingan
