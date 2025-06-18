@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import io # Import io for BytesIO
+import io
 
 st.set_page_config(page_title="EDI Bay/POD Parser", layout="centered")
 
@@ -14,13 +14,11 @@ if uploaded_file is not None:
 
     records = []
     
-    # Inisialisasi variabel untuk menyimpan data kontainer saat ini
-    # Kita akan mengisi ini, dan memprosesnya saat EQD+CN+ muncul
-    current_container_data = {} 
+    # Variabel untuk menyimpan data kontainer saat ini yang sedang diproses
+    current_container_data = {}
     
-    # Flag untuk menandai apakah kita sudah mulai mengumpulkan data kontainer yang valid
-    # Ini membantu mengatasi data awal sebelum EQD+CN+ pertama
-    first_container_data_started = False 
+    # Flag untuk menunjukkan apakah kita sedang dalam "blok" data kontainer yang sedang dikumpulkan
+    is_collecting_container_data = False
 
     def process_and_add_record(data_to_process):
         """Memproses data kontainer yang telah dikumpulkan dan menambahkannya ke records jika lengkap dan sesuai kriteria."""
@@ -38,44 +36,68 @@ if uploaded_file is not None:
     for line in lines:
         line = line.strip()
 
-        # Ketika segmen EQD+CN+ ditemukan, ini menandakan data kontainer sebelumnya selesai
-        # Jadi, kita proses data yang sudah terkumpul untuk kontainer sebelumnya.
-        if line.startswith("EQD+CN+"):
-            if first_container_data_started: # Pastikan kita sudah mulai mengumpulkan data kontainer
+        # Kondisi untuk memulai pengumpulan data kontainer baru
+        if line.startswith("LOC+147+"):
+            # Jika kita sudah mengumpulkan data untuk kontainer sebelumnya, proses dulu
+            if is_collecting_container_data and current_container_data:
                 process_and_add_record(current_container_data)
-            current_container_data = {} # Reset untuk kontainer baru
-            first_container_data_started = True # Mulai mengumpulkan data untuk kontainer berikutnya
-
-        # Ekstrak Bay
-        elif line.startswith("LOC+147+"):
+            
+            # Reset untuk kontainer baru dan mulai mengumpulkan
+            current_container_data = {}
+            is_collecting_container_data = True
+            
             try:
                 full_bay = line.split("+")[2].split(":")[0]
-                # Perhatikan: Sesuaikan indeks [1:3] jika Bay yang Anda inginkan adalah "02" dari "0221188"
-                # Jika "02", pakai [0:2]. Jika "22", pakai [1:3] seperti semula.
-                # Berdasarkan data Anda ("0221188"), saya asumsikan Anda ingin "02". Jadi saya ubah ke [0:2]
+                # Menggunakan [0:2] untuk mengambil "02" dari "0221188"
                 current_container_data["bay"] = full_bay[0:2] 
             except IndexError:
-                st.warning(f"Format LOC+147+ tidak dikenal: {line}. Melewatkan Bay.")
+                st.warning(f"Format LOC+147+ tidak dikenal: {line}. Melewatkan Bay untuk kontainer ini.")
                 current_container_data["bay"] = None 
-            
-        # Ekstrak Port of Discharge (POD)
-        elif line.startswith("LOC+11+"):
+        
+        # Ekstrak Port of Discharge (POD) jika sedang dalam mode pengumpulan
+        elif is_collecting_container_data and line.startswith("LOC+11+"):
             try:
                 current_container_data["pod"] = line.split("+")[2].split(":")[0]
             except IndexError:
-                st.warning(f"Format LOC+11+ tidak dikenal: {line}. Melewatkan POD.")
+                st.warning(f"Format LOC+11+ tidak dikenal: {line}. Melewatkan POD untuk kontainer ini.")
                 current_container_data["pod"] = None
 
-        # Ekstrak Port of Loading (POL)
-        elif line.startswith("LOC+9+"):
+        # Ekstrak Port of Loading (POL) jika sedang dalam mode pengumpulan
+        elif is_collecting_container_data and line.startswith("LOC+9+"):
             try:
                 current_container_data["pol"] = line.split("+")[2].split(":")[0]
             except IndexError:
-                st.warning(f"Format LOC+9+ tidak dikenal: {line}. Melewatkan POL.")
+                st.warning(f"Format LOC+9+ tidak dikenal: {line}. Melewatkan POL untuk kontainer ini.")
                 current_container_data["pol"] = None
 
-    # Penting: Setelah loop selesai, proses data kontainer terakhir jika ada dan sudah dimulai
-    if first_container_data_started and current_container_data:
+        # Kondisi untuk mengakhiri pengumpulan data kontainer (NAD+ atau EQD+CN+)
+        # Berdasarkan file Anda, EQD+CN+ dan NAD+ muncul setelah semua LOC data kontainer
+        # Kita bisa gunakan NAD+ sebagai penanda akhir yang lebih kuat,
+        # atau EQD+CN+ yang menandai Container ID (tapi data LOC sudah di atasnya)
+        # Mari kita gunakan NAD+ sebagai pemicu untuk memproses data kontainer sebelumnya
+        elif is_collecting_container_data and line.startswith("NAD+"):
+            # Jika NAD+ ditemukan, berarti data untuk kontainer yang sedang diproses sudah lengkap
+            process_and_add_record(current_container_data)
+            # Tidak perlu reset current_container_data atau is_collecting_container_data di sini,
+            # karena LOC+147+ berikutnya yang akan memicu reset dan mulai baru.
+            # Namun, jika tidak ada LOC+147+ setelah NAD+, data NAD+ tersebut tidak akan terproses.
+            # Alternatif: Tetap set is_collecting_container_data = False dan current_container_data = {}
+            # agar hanya LOC+147+ yang baru yang memulai pengumpulan.
+            # Untuk skenario ini, kita akan membiarkan LOC+147+ berikutnya yang me-reset.
+
+        # Jika kita melewati baris yang tidak relevan, biarkan saja
+        # Jika Anda juga ingin mengambil EQD+CN+ (Container ID), bisa tambahkan di sini
+        # elif is_collecting_container_data and line.startswith("EQD+CN+"):
+        #     try:
+        #         container_id = line.split("+")[2]
+        #         current_container_data["container_id"] = container_id
+        #     except IndexError:
+        #         st.warning(f"Format EQD+CN+ tidak dikenal: {line}. Melewatkan Container ID.")
+        #         current_container_data["container_id"] = None
+
+
+    # Setelah loop selesai, pastikan memproses kontainer terakhir jika ada
+    if is_collecting_container_data and current_container_data:
         process_and_add_record(current_container_data)
 
     if records:
