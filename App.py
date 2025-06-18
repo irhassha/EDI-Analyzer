@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import io
 
 # Konfigurasi halaman Streamlit
@@ -72,10 +73,36 @@ def parse_edi_to_pivot(uploaded_file):
     return pivot_df
 
 
+def forecast_next_value(series):
+    """
+    Memperkirakan nilai berikutnya dalam sebuah series menggunakan regresi linear.
+    """
+    # Membutuhkan minimal 2 titik data untuk membuat tren
+    if len(series.dropna()) < 2:
+        return series.mean() # Jika kurang dari 2 data, kembalikan rata-rata
+
+    y = series.values
+    x = np.arange(len(y))
+
+    # Regresi linear untuk menemukan slope (m) dan intercept (b)
+    try:
+        m, b = np.polyfit(x, y, 1)
+    except np.linalg.LinAlgError:
+        # Jika terjadi error (misal, semua data sama), kembalikan rata-rata
+        return np.mean(y)
+
+    # Memprediksi nilai untuk x berikutnya
+    next_x = len(y)
+    forecast = m * next_x + b
+
+    # Forecast tidak boleh negatif dan harus integer
+    return max(0, round(forecast))
+
+
 def compare_multiple_pivots(pivots_dict_selected):
     """
-    Fungsi ini membandingkan beberapa DataFrame pivot yang dipilih dan 
-    mengembalikan DataFrame perbandingan gabungan yang sudah diurutkan.
+    Fungsi ini membandingkan beberapa DataFrame pivot dan mengembalikan
+    DataFrame perbandingan dengan kolom forecast.
     """
     if not pivots_dict_selected or len(pivots_dict_selected) < 2:
         return pd.DataFrame()
@@ -96,10 +123,10 @@ def compare_multiple_pivots(pivots_dict_selected):
     merged_df = pd.concat(dfs_to_merge, axis=1, join='outer')
     merged_df = merged_df.fillna(0).astype(int)
 
-    # Menghitung kolom 'Average' dari semua kolom jumlah
+    # Menghitung kolom 'Forecast' menggunakan regresi linear per baris
     jumlah_cols = [col for col in merged_df.columns if col.startswith('Jumlah')]
     if jumlah_cols:
-        merged_df['Average'] = merged_df[jumlah_cols].mean(axis=1).round(2)
+        merged_df['Forecast (Next Vessel)'] = merged_df[jumlah_cols].apply(forecast_next_value, axis=1)
 
     # Mengurutkan berdasarkan Bay dan mengembalikan ke bentuk tabel datar
     merged_df = merged_df.reset_index()
@@ -136,8 +163,8 @@ def create_summary_table(pivots_dict):
 
 # --- TAMPILAN APLIKASI STREAMLIT ---
 
-st.title("🚢 EDI File Comparator")
-st.caption("Unggah 2 file EDI atau lebih untuk membandingkan komposisi Bay, POD, dan jumlah kontainer.")
+st.title("🚢 EDI File Comparator & Forecaster")
+st.caption("Unggah file EDI untuk membandingkan dan memprediksi muatan kapal berikutnya.")
 
 uploaded_files = st.file_uploader(
     "Upload file .EDI Anda di sini",
@@ -146,7 +173,7 @@ uploaded_files = st.file_uploader(
 )
 
 if len(uploaded_files) < 2:
-    st.info("ℹ️ Silakan unggah minimal 2 file untuk memulai perbandingan.")
+    st.info("ℹ️ Silakan unggah minimal 2 file untuk memulai perbandingan dan prediksi.")
 else:
     # Memproses setiap file yang diunggah
     with st.spinner("Menganalisis file..."):
@@ -164,12 +191,12 @@ else:
     st.markdown("---")
 
     # --- UI UNTUK MEMILIH FILE YANG AKAN DIBANDINGKAN ---
-    st.header(f"🔍 Perbandingan Detail")
+    st.header(f"🔍 Perbandingan Detail & Prediksi")
     
     file_names = list(pivots_dict.keys())
     
     selected_files = st.multiselect(
-        "Pilih 2 file atau lebih untuk dibandingkan:",
+        "Pilih file (secara berurutan) untuk perbandingan dan prediksi:",
         options=file_names,
         default=file_names  # Defaultnya memilih semua file
     )
