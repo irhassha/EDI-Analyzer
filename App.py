@@ -70,6 +70,12 @@ def parse_edi_to_pivot(uploaded_file):
 
     # Membuat pivot table
     pivot_df = df_display.groupby(["Bay", "Port of Discharge"]).size().reset_index(name="Jumlah Kontainer")
+    
+    # Pastikan kolom Bay adalah numerik untuk sorting dan clustering
+    pivot_df['Bay'] = pd.to_numeric(pivot_df['Bay'], errors='coerce')
+    pivot_df.dropna(subset=['Bay'], inplace=True)
+    pivot_df['Bay'] = pivot_df['Bay'].astype(int)
+    
     return pivot_df
 
 
@@ -166,6 +172,59 @@ def create_summary_table(pivots_dict):
     
     return final_summary.reset_index()
 
+def create_cluster_table(comparison_df, num_clusters=6):
+    """
+    Membuat tabel kluster persentase alokasi berdasarkan forecast.
+    """
+    if comparison_df.empty or 'Forecast (Next Vessel)' not in comparison_df.columns:
+        return pd.DataFrame()
+
+    df = comparison_df.copy()
+
+    # Pastikan kolom 'Bay' adalah numerik
+    df['Bay'] = pd.to_numeric(df['Bay'], errors='coerce')
+    df.dropna(subset=['Bay'], inplace=True)
+    df['Bay'] = df['Bay'].astype(int)
+
+    if df.empty or len(df['Bay'].unique()) < num_clusters:
+        # Tidak cukup variasi bay untuk membuat kluster
+        return pd.DataFrame()
+
+    # Buat bin untuk cluster secara merata
+    try:
+        df['Cluster ID'], bins = pd.cut(df['Bay'], bins=num_clusters, retbins=True, right=True, include_lowest=True, labels=False, duplicates='drop')
+    except ValueError: # Terjadi jika tidak bisa membuat 6 kluster
+        return pd.DataFrame()
+
+
+    # Buat label rentang yang mudah dibaca dari tepi bin
+    labels = [f"{int(bins[i])+1 if i > 0 else int(bins[i])}-{int(bins[i+1])}" for i in range(len(bins)-1)]
+    labels[0] = f"{df['Bay'].min()}-{int(bins[1])}"
+    
+    # Petakan ID kluster numerik ke label rentang yang kita buat
+    label_map = {i: labels[i] for i in range(len(labels))}
+    df['BAY'] = df['Cluster ID'].map(label_map)
+
+    # Hitung total forecast per POD untuk denominasi persentase
+    total_forecast_per_pod = df.groupby('Port of Discharge')['Forecast (Next Vessel)'].sum()
+    
+    # Pivot untuk mendapatkan jumlah forecast per cluster dan POD
+    cluster_pivot = df.groupby(['BAY', 'Port of Discharge'])['Forecast (Next Vessel)'].sum().unstack(fill_value=0)
+    
+    total_forecast_per_pod[total_forecast_per_pod == 0] = 1
+
+    # Hitung persentase
+    percentage_df = cluster_pivot.div(total_forecast_per_pod, axis=1) * 100
+
+    # Format persentase menjadi string dengan '%'
+    for col in percentage_df.columns:
+        percentage_df[col] = percentage_df[col].map('{:.2f}%'.format)
+
+    # Final formatting untuk tabel output
+    percentage_df = percentage_df.reset_index()
+    percentage_df.insert(0, 'CLUSTER', range(1, len(percentage_df) + 1))
+    
+    return percentage_df
 
 # --- TAMPILAN APLIKASI STREAMLIT ---
 
@@ -221,6 +280,17 @@ else:
         if not comparison_df.empty:
             # Menerapkan perataan tengah pada tabel perbandingan
             st.dataframe(comparison_df.style.set_properties(**{'text-align': 'center'}))
+
+            # --- BUAT DAN TAMPILKAN TABEL CLUSTER ---
+            st.markdown("---")
+            st.header("🎯 Prediksi Alokasi Cluster Berdasarkan Forecast")
+            cluster_table = create_cluster_table(comparison_df)
+            
+            if not cluster_table.empty:
+                st.dataframe(cluster_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+            else:
+                st.info("Tidak cukup data atau variasi 'Bay' untuk membuat tabel prediksi cluster.")
+
         else:
             st.warning(f"Tidak dapat membandingkan file-file yang dipilih. Pastikan file valid dan berisi data dari POL 'IDJKT'.")
     else:
