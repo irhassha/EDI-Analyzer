@@ -308,8 +308,8 @@ def create_colored_weight_chart(df_with_clusters):
 
 def create_summary_chart(summary_df):
     """
-    Creates a horizontal bar chart showing total container counts per source,
-    with labels for the totals.
+    Creates a stacked bar chart showing total container counts per source,
+    with horizontal labels and total counts on top.
     """
     if summary_df.empty:
         return
@@ -326,32 +326,34 @@ def create_summary_chart(summary_df):
         st.warning("Could not generate summary chart due to missing data.")
         return
 
-    # Group by Source to get the total count for each bar
-    total_counts = melted_df.groupby('Source')['Container Count'].sum().reset_index()
-    total_counts.rename(columns={'Container Count': 'Total Count'}, inplace=True)
-    
     # Clean up the 'Source' names for the legend
-    total_counts['Source Label'] = total_counts['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
+    melted_df['Source Label'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
 
-    # Base bar chart
-    bars = alt.Chart(total_counts).mark_bar().encode(
-        y=alt.Y('Source Label:N', sort='-x', title='Data Source (Vessel/Forecast)'),
-        x=alt.X('Total Count:Q', title='Total Container Count'),
-        tooltip=['Source Label', 'Total Count']
+    # Calculate total for text labels
+    totals_df = melted_df.groupby('Source Label')['Container Count'].sum().reset_index()
+
+    # Base stacked bar chart
+    bars = alt.Chart(melted_df).mark_bar().encode(
+        x=alt.X('Source Label:N', sort=None, title='Data Source (Vessel/Forecast)', axis=alt.Axis(labelAngle=0)),
+        y=alt.Y('sum(Container Count):Q', title='Total Container Count'),
+        color=alt.Color('Port of Discharge:N', title='Port of Discharge'),
+        tooltip=['Source Label', 'Port of Discharge', 'Container Count']
     )
 
     # Text layer for the total labels
-    text = bars.mark_text(
-        align='left',
-        baseline='middle',
-        dx=3  # Nudge text to right so it's outside the bar
+    text = alt.Chart(totals_df).mark_text(
+        align='center',
+        baseline='bottom',
+        dy=-10  # Nudge text up slightly
     ).encode(
-        text='Total Count:Q'
+        x=alt.X('Source Label:N', sort=None),
+        y=alt.Y('Container Count:Q'),
+        text=alt.Text('Container Count:Q', format=',')
     )
-    
+
     # Combine the chart and the text layer
     chart = (bars + text).properties(
-        title='Total Container Count per Vessel and Forecast'
+        title='Container Composition per Vessel and Forecast'
     )
     
     st.altair_chart(chart, use_container_width=True)
