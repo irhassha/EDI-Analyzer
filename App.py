@@ -253,12 +253,11 @@ def create_colored_weight_chart(df_with_clusters):
         st.info("No forecast weight data to display in the chart.")
         
 def style_table_by_pod_color(df):
-    """ Applies a background color to columns based on the POD name in the header. """
+    """ Applies a background color to column headers based on the POD name. """
     # Extract unique PODs from the column names
     pods = set()
     for col in df.columns:
         if isinstance(col, str):
-            # Assumes format "POD TYPE", e.g., "SGSIN 20"
             parts = col.split()
             if len(parts) > 1:
                 pods.add(parts[0])
@@ -267,17 +266,18 @@ def style_table_by_pod_color(df):
     colors = ['#2E4053', '#566573', '#34495E', '#212F3D', '#515A5A', '#85929E']
     color_map = {pod: colors[i % len(colors)] for i, pod in enumerate(sorted(list(pods)))}
 
-    # Function to apply style
-    def apply_color(col):
-        # Find which POD this column belongs to
-        pod_in_col = next((pod for pod in color_map if pod in col.name), None)
+    # Generate style rules for each column header
+    styles = []
+    for i, col_name in enumerate(df.columns):
+        pod_in_col = next((pod for pod in color_map if pod in col_name), None)
         if pod_in_col:
-            return [f'background-color: {color_map[pod_in_col]}' for _ in col]
-        else:
-            return ['' for _ in col]
-
-    # Apply the style to the dataframe
-    return df.style.apply(apply_color, axis=0)
+            styles.append({
+                'selector': f'th.col_heading.level0.col{i}',
+                'props': [('background-color', color_map[pod_in_col]), ('color', 'white')]
+            })
+            
+    # Apply the generated styles to the dataframe's Styler object
+    return df.style.set_table_styles(styles)
 
 # --- STREAMLIT APP LAYOUT ---
 
