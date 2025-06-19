@@ -177,14 +177,8 @@ def create_summary_table(comparison_df):
     
     # Group by POD and sum up the values
     summary = comparison_df[grouping_cols].groupby('Port of Discharge').sum().reset_index()
-
-    # Add a Total row
-    total_row = summary[summary_cols].sum().to_frame().T
-    total_row['Port of Discharge'] = "**TOTAL**"
     
-    final_summary = pd.concat([summary, total_row], ignore_index=True)
-    
-    return final_summary
+    return summary
 
 
 def add_cluster_info(df, num_clusters=6):
@@ -314,39 +308,52 @@ def create_colored_weight_chart(df_with_clusters):
 
 def create_summary_chart(summary_df):
     """
-    Creates and displays a stacked bar chart for the summary data, showing composition per vessel.
+    Creates a horizontal bar chart showing total container counts per source,
+    with labels for the totals.
     """
-    # Exclude the TOTAL row for charting
-    chart_data = summary_df[summary_df['Port of Discharge'] != '**TOTAL**'].copy()
-
-    if chart_data.empty:
+    if summary_df.empty:
         return
 
     # Melt the dataframe to have a long format suitable for Altair
     try:
         melted_df = pd.melt(
-            chart_data,
+            summary_df,
             id_vars=['Port of Discharge'],
             var_name='Source',
             value_name='Container Count'
         )
     except KeyError:
-        # This can happen if there are no count/forecast columns
         st.warning("Could not generate summary chart due to missing data.")
         return
 
-
+    # Group by Source to get the total count for each bar
+    total_counts = melted_df.groupby('Source')['Container Count'].sum().reset_index()
+    total_counts.rename(columns={'Container Count': 'Total Count'}, inplace=True)
+    
     # Clean up the 'Source' names for the legend
-    melted_df['Source'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
+    total_counts['Source Label'] = total_counts['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
 
-    chart = alt.Chart(melted_df).mark_bar().encode(
-        x=alt.X('Source:N', sort=None, title='Data Source (Vessel/Forecast)'),
-        y=alt.Y('Container Count:Q', title='Total Container Count'),
-        color=alt.Color('Port of Discharge:N', title='Port of Discharge'),
-        tooltip=['Source', 'Port of Discharge', 'Container Count']
-    ).properties(
-        title='Container Composition per Vessel and Forecast'
+    # Base bar chart
+    bars = alt.Chart(total_counts).mark_bar().encode(
+        y=alt.Y('Source Label:N', sort='-x', title='Data Source (Vessel/Forecast)'),
+        x=alt.X('Total Count:Q', title='Total Container Count'),
+        tooltip=['Source Label', 'Total Count']
     )
+
+    # Text layer for the total labels
+    text = bars.mark_text(
+        align='left',
+        baseline='middle',
+        dx=3  # Nudge text to right so it's outside the bar
+    ).encode(
+        text='Total Count:Q'
+    )
+    
+    # Combine the chart and the text layer
+    chart = (bars + text).properties(
+        title='Total Container Count per Vessel and Forecast'
+    )
+    
     st.altair_chart(chart, use_container_width=True)
 
 def style_dataframe_left(df):
@@ -405,7 +412,7 @@ else:
             comparison_df = comparison_df[~comparison_df['Port of Discharge'].isin(excluded_pods)]
 
         st.markdown("---")
-        st.header("📊 Summary of Total Containers per Port of Discharge")
+        st.header("📊 Summary of Total Containers per Vessel")
         summary_table = create_summary_table(comparison_df)
         
         if not summary_table.empty:
