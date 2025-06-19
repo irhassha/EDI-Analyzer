@@ -218,9 +218,9 @@ def create_colored_weight_chart(df_with_clusters):
     else:
         st.info("No forecast weight data to display in the chart.")
         
-def style_table(df, use_pod_colors=False):
-    """ Applies center alignment and optional header coloring to a DataFrame. """
-    styles = [{'selector': 'th, td', 'props': [('text-align', 'center')]}]
+def style_table(df, align='left', use_pod_colors=False):
+    """ Applies alignment and optional header coloring to a DataFrame. """
+    styles = [{'selector': 'th, td', 'props': [('text-align', align)]}]
     
     if use_pod_colors:
         pods = set()
@@ -301,18 +301,18 @@ else:
         st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
         cluster_table = create_summarized_cluster_table(df_with_clusters)
         if not cluster_table.empty:
-            st.dataframe(style_table(cluster_table.set_index('CLUSTER'), use_pod_colors=True), use_container_width=True)
+            st.dataframe(style_table(cluster_table.set_index('CLUSTER'), use_pod_colors=True, align='left'), use_container_width=True)
 
         st.subheader("Macro Slot Needs")
         macro_slot_table = create_macro_slot_table(df_with_clusters)
         if not macro_slot_table.empty:
-            st.dataframe(style_table(macro_slot_table.set_index('CLUSTER'), use_pod_colors=True), use_container_width=True)
+            st.dataframe(style_table(macro_slot_table.set_index('CLUSTER'), use_pod_colors=True, align='left'), use_container_width=True)
         
         st.markdown("---")
         
         with st.expander("Show Detailed Comparison & Forecast Table"):
             display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-            st.dataframe(style_table(comparison_df[display_cols]), use_container_width=True)
+            st.dataframe(style_table(comparison_df[display_cols], align='left'), use_container_width=True)
             
         st.header("⚖️ Forecast Weight (VGM) Chart per Bay")
         create_colored_weight_chart(df_with_clusters)
