@@ -184,11 +184,17 @@ def create_summary_table(pivots_dict, detailed_forecast_df):
         if 'Forecast (Next Vessel)' in detailed_forecast_df.columns:
             forecast_summary_count = detailed_forecast_df.groupby('Port of Discharge')['Forecast (Next Vessel)'].sum()
             final_summary['Forecast (Next Vessel)'] = forecast_summary_count
-            final_summary['Forecast (Next Vessel)'] = final_summary['Forecast (Next Vessel)'].fillna(0)
         
         if 'Forecast Weight (KGM)' in detailed_forecast_df.columns:
             forecast_summary_weight = detailed_forecast_df.groupby('Port of Discharge')['Forecast Weight (KGM)'].sum()
-            final_summary['Forecast Weight (KGM)'] = final_summary['Forecast Weight (KGM)'].fillna(0)
+            final_summary['Forecast Weight (KGM)'] = forecast_summary_weight
+    
+    # Fill NaN values only if the forecast columns exist
+    if 'Forecast (Next Vessel)' in final_summary.columns:
+        final_summary['Forecast (Next Vessel)'] = final_summary['Forecast (Next Vessel)'].fillna(0)
+    if 'Forecast Weight (KGM)' in final_summary.columns:
+        final_summary['Forecast Weight (KGM)'] = final_summary['Forecast Weight (KGM)'].fillna(0)
+
 
     # Add a Total row
     total_row = final_summary.sum().to_frame().T
@@ -379,9 +385,12 @@ else:
         st.subheader(f"Detailed Comparison & Forecast Result: {title}")
         
         if not comparison_df.empty:
-            # Prepare the table for display (without weight columns and clusters)
-            display_cols = [col for col in comparison_df.columns if not col.startswith('Weight') and 'Weight' not in col]
-            st.dataframe(style_dataframe_center(comparison_df[display_cols]), use_container_width=True)
+            # Add cluster information to the main DataFrame
+            df_with_clusters = add_cluster_info(comparison_df)
+            
+            # Prepare the table for display (without weight columns)
+            display_cols = [col for col in df_with_clusters.columns if not col.startswith('Weight')]
+            st.dataframe(style_dataframe_center(df_with_clusters[display_cols]), use_container_width=True)
 
             st.markdown("---")
             st.header("🎯 Cluster Analysis")
@@ -392,7 +401,7 @@ else:
                 help="This will group the Bays into the selected number of ranges for analysis."
             )
             
-            # Add cluster information to the main DataFrame based on user input
+            # Re-add cluster information based on user input
             df_with_clusters = add_cluster_info(comparison_df, num_clusters)
 
             st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
