@@ -330,8 +330,7 @@ def create_summary_chart(summary_df):
     melted_df['Source Label'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
 
     # Calculate total for text labels
-    totals_df = melted_df.groupby('Source Label')['Container Count'].sum().reset_index()
-    totals_df.rename(columns={'Container Count': 'Total Count'}, inplace=True)
+    totals_df = melted_df.groupby('Source Label')['Container Count'].sum().reset_index(name='Total Count')
 
     # Base stacked bar chart
     bars = alt.Chart(melted_df).mark_bar().encode(
@@ -430,9 +429,11 @@ else:
         st.subheader(f"Detailed Comparison & Forecast Result: {title}")
         
         if not comparison_df.empty:
-            # Prepare the table for display (without weight columns)
-            display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-            st.dataframe(style_dataframe_left(comparison_df[display_cols]), use_container_width=True)
+            # --- Checkbox to show/hide the detailed table ---
+            if st.checkbox("Show Detailed Comparison Table", value=False):
+                # Prepare the table for display (without weight columns)
+                display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
+                st.dataframe(style_dataframe_left(comparison_df[display_cols]), use_container_width=True)
 
             st.markdown("---")
             st.header("🎯 Cluster Analysis")
