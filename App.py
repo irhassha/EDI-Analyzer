@@ -326,7 +326,7 @@ else:
         st.subheader("Macro Slot Needs")
         macro_slot_table = create_macro_slot_table(df_with_clusters)
         if not macro_slot_table.empty:
-            st.dataframe(style_table(macro_slot_table.set_index('CLUSTER'), use_pod_colors=True, highlight_cols=['CLUSTER', 'BAY', 'Total Slot Needs'], align='left'), use_container_width=True)
+            st.dataframe(style_table(macro_slot_table.set_index('CLUSTER'), use_pod_colors=True, highlight_cols=['CLUSTER', 'Total Slot Needs'], align='left'), use_container_width=True)
         
         st.markdown("---")
         
