@@ -331,10 +331,11 @@ def create_summary_chart(summary_df):
 
     # Calculate total for text labels
     totals_df = melted_df.groupby('Source Label')['Container Count'].sum().reset_index()
+    totals_df.rename(columns={'Container Count': 'Total Count'}, inplace=True)
 
     # Base stacked bar chart
     bars = alt.Chart(melted_df).mark_bar().encode(
-        x=alt.X('Source Label:N', sort=None, title='Data Source (Vessel/Forecast)', axis=alt.Axis(labelAngle=0)),
+        x=alt.X('Source Label:N', sort=None, title='Data Source (Vessel/Forecast)', axis=alt.Axis(labelAngle=0, labelLimit=200)),
         y=alt.Y('sum(Container Count):Q', title='Total Container Count'),
         color=alt.Color('Port of Discharge:N', title='Port of Discharge'),
         tooltip=['Source Label', 'Port of Discharge', 'Container Count']
@@ -344,11 +345,12 @@ def create_summary_chart(summary_df):
     text = alt.Chart(totals_df).mark_text(
         align='center',
         baseline='bottom',
-        dy=-10  # Nudge text up slightly
+        dy=-10,  # Nudge text up slightly
+        color='white' # Make text visible on dark backgrounds
     ).encode(
         x=alt.X('Source Label:N', sort=None),
-        y=alt.Y('Container Count:Q'),
-        text=alt.Text('Container Count:Q', format=',')
+        y=alt.Y('Total Count:Q'),
+        text=alt.Text('Total Count:Q', format=',')
     )
 
     # Combine the chart and the text layer
