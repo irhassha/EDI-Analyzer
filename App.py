@@ -327,6 +327,13 @@ def create_colored_weight_chart(comparison_df):
     else:
         st.info("No forecast weight data to display in the chart.")
 
+def style_dataframe_center(df):
+    """
+    Applies center alignment to both headers and cells of a DataFrame.
+    """
+    return df.style.set_table_styles([
+        dict(selector="th, td", props=[("text-align", "center")])
+    ])
 
 # --- STREAMLIT APP LAYOUT ---
 
@@ -364,7 +371,7 @@ else:
         summary_table = create_summary_table(pivots_dict, comparison_df)
         
         if not summary_table.empty:
-            st.dataframe(summary_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+            st.dataframe(style_dataframe_center(summary_table), use_container_width=True)
         else:
             st.warning("No valid data to create a summary.")
             
@@ -379,20 +386,23 @@ else:
             
             # Prepare the table for display (without weight columns)
             display_cols = [col for col in df_with_clusters.columns if not col.startswith('Weight') and 'Weight' not in col]
-            st.dataframe(df_with_clusters[display_cols].style.set_properties(**{'text-align': 'center'}))
+            st.dataframe(style_dataframe_center(df_with_clusters[display_cols]))
 
             st.markdown("---")
             st.header("🎯 Forecast Allocation Summary per Cluster (in Boxes)")
-            cluster_table = create_summarized_cluster_table(df_with_clusters)
+            # Rename columns for clarity before passing to function
+            df_for_cluster = df_with_clusters.rename(columns={'Bay Range': 'Bay Range', 'Cluster ID': 'Cluster ID'})
+            cluster_table = create_summarized_cluster_table(df_for_cluster)
             
             if not cluster_table.empty:
-                st.dataframe(cluster_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+                st.dataframe(style_dataframe_center(cluster_table), use_container_width=True)
 
                 st.markdown("---")
                 st.header("⚙️ Macro Slot Needs")
-                macro_slot_table = create_macro_slot_table(df_with_clusters)
+                df_for_macro = df_with_clusters.rename(columns={'Bay Range': 'Bay Range', 'Cluster ID': 'Cluster ID'})
+                macro_slot_table = create_macro_slot_table(df_for_macro)
                 if not macro_slot_table.empty:
-                    st.dataframe(macro_slot_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+                    st.dataframe(style_dataframe_center(macro_slot_table), use_container_width=True)
             else:
                 st.info("No forecast data to create the cluster allocation table.")
             
