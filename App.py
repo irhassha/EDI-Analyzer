@@ -251,6 +251,33 @@ def create_colored_weight_chart(df_with_clusters):
         st.altair_chart(chart, use_container_width=True)
     else:
         st.info("No forecast weight data to display in the chart.")
+        
+def style_table_by_pod_color(df):
+    """ Applies a background color to columns based on the POD name in the header. """
+    # Extract unique PODs from the column names
+    pods = set()
+    for col in df.columns:
+        if isinstance(col, str):
+            # Assumes format "POD TYPE", e.g., "SGSIN 20"
+            parts = col.split()
+            if len(parts) > 1:
+                pods.add(parts[0])
+
+    # Define a color palette
+    colors = ['#2E4053', '#566573', '#34495E', '#212F3D', '#515A5A', '#85929E']
+    color_map = {pod: colors[i % len(colors)] for i, pod in enumerate(sorted(list(pods)))}
+
+    # Function to apply style
+    def apply_color(col):
+        # Find which POD this column belongs to
+        pod_in_col = next((pod for pod in color_map if pod in col.name), None)
+        if pod_in_col:
+            return [f'background-color: {color_map[pod_in_col]}' for _ in col]
+        else:
+            return ['' for _ in col]
+
+    # Apply the style to the dataframe
+    return df.style.apply(apply_color, axis=0)
 
 # --- STREAMLIT APP LAYOUT ---
 
@@ -317,29 +344,17 @@ else:
         st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
         cluster_table = create_summarized_cluster_table(df_with_clusters)
         if not cluster_table.empty:
-            st.dataframe(cluster_table.set_index('CLUSTER'), use_container_width=True)
+            st.dataframe(style_table_by_pod_color(cluster_table.set_index('CLUSTER')), use_container_width=True)
 
         st.subheader("Macro Slot Needs")
         macro_slot_table = create_macro_slot_table(df_with_clusters)
         if not macro_slot_table.empty:
-            st.dataframe(macro_slot_table.set_index('CLUSTER'), use_container_width=True)
+            st.dataframe(style_table_by_pod_color(macro_slot_table.set_index('CLUSTER')), use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
         
         with st.expander("Show Detailed Comparison & Forecast Table"):
             display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-            
-            # --- NEW: Styling function for row colors ---
-            unique_pods_for_style = comparison_df['Port of Discharge'].unique()
-            colors = ['#2E4053', '#566573', '#85929E', '#34495E', '#212F3D', '#515A5A']
-            color_map = {pod: colors[i % len(colors)] for i, pod in enumerate(unique_pods_for_style)}
-
-            def highlight_pod_rows(row):
-                color = color_map.get(row['Port of Discharge'], '')
-                return [f'background-color: {color}' for _ in row]
-            
-            # Apply the style
-            styled_df = comparison_df[display_cols].style.apply(highlight_pod_rows, axis=1)
-            st.dataframe(styled_df, use_container_width=True)
+            st.dataframe(comparison_df[display_cols], use_container_width=True)
             
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown('<p class="section-header">⚖️ Forecast Weight (VGM) Chart per Bay</p>', unsafe_allow_html=True)
