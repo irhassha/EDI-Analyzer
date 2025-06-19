@@ -159,52 +159,29 @@ def compare_multiple_pivots(pivots_dict_selected):
     return merged_df
 
 
-def create_summary_table(pivots_dict, detailed_forecast_df):
+def create_summary_table(comparison_df):
     """
-    Creates a summary table. The forecast column is now summed up from the
-    detailed comparison table for consistency.
+    Creates a summary table from the main comparison dataframe.
     """
-    summaries = []
-    for file_name, pivot in pivots_dict.items():
-        if not pivot.empty:
-            # Aggregate count and weight
-            summary = pivot.groupby("Port of Discharge").agg(
-                **{f'Count ({file_name})': ('Container Count', 'sum'), f'Weight ({file_name})': ('Total Weight', 'sum')}
-            )
-            summaries.append(summary)
-            
-    if not summaries:
+    if comparison_df.empty:
         return pd.DataFrame()
 
-    # Merge all historical summaries
-    final_summary = pd.concat(summaries, axis=1).fillna(0).astype(int)
+    # Identify all relevant columns (count and forecast)
+    summary_cols = [col for col in comparison_df.columns if col.startswith('Count') or 'Forecast (Next Vessel)' in col]
+    # Add Port of Discharge for grouping
+    grouping_cols = ['Port of Discharge'] + summary_cols
     
-    # Calculate forecast per POD by summing from the detailed comparison
-    if not detailed_forecast_df.empty:
-        if 'Forecast (Next Vessel)' in detailed_forecast_df.columns:
-            forecast_summary_count = detailed_forecast_df.groupby('Port of Discharge')['Forecast (Next Vessel)'].sum()
-            final_summary['Forecast (Next Vessel)'] = forecast_summary_count
-        
-        if 'Forecast Weight (KGM)' in detailed_forecast_df.columns:
-            forecast_summary_weight = detailed_forecast_df.groupby('Port of Discharge')['Forecast Weight (KGM)'].sum()
-            final_summary['Forecast Weight (KGM)'] = forecast_summary_weight
-    
-    # Fill NaN values only if the forecast columns exist
-    if 'Forecast (Next Vessel)' in final_summary.columns:
-        final_summary['Forecast (Next Vessel)'] = final_summary['Forecast (Next Vessel)'].fillna(0)
-    if 'Forecast Weight (KGM)' in final_summary.columns:
-        final_summary['Forecast Weight (KGM)'] = final_summary['Forecast Weight (KGM)'].fillna(0)
-
+    # Group by POD and sum up the values
+    summary = comparison_df[grouping_cols].groupby('Port of Discharge').sum().reset_index()
 
     # Add a Total row
-    total_row = final_summary.sum().to_frame().T
-    total_row.index = ["**TOTAL**"]
-    final_summary = pd.concat([final_summary, total_row]).astype(int)
+    total_row = summary[summary_cols].sum().to_frame().T
+    total_row['Port of Discharge'] = "**TOTAL**"
     
-    # Hide historical weight columns from the display
-    cols_to_display = [col for col in final_summary.columns if not col.startswith('Weight')]
+    final_summary = pd.concat([summary, total_row], ignore_index=True)
     
-    return final_summary[cols_to_display].reset_index()
+    return final_summary
+
 
 def add_cluster_info(df, num_clusters=6):
     """
@@ -356,23 +333,39 @@ else:
     with st.spinner("Analyzing files..."):
         pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files}
 
-    st.header(f"🔍 Detailed Comparison & Forecast")
+    st.header(f"⚙️ Analysis Settings")
     
     file_names = list(pivots_dict.keys())
     
-    selected_files = st.multiselect(
-        "Select files (in order) for comparison and forecast:",
-        options=file_names,
-        default=file_names
-    )
+    col1, col2 = st.columns(2)
+    with col1:
+        selected_files = st.multiselect(
+            "1. Select files (in order) for comparison:",
+            options=file_names,
+            default=file_names
+        )
+    
+    # Get all unique PODs from the selected files
+    all_pods = sorted(list(pd.concat([pivots_dict[name]['Port of Discharge'] for name in selected_files if name in pivots_dict]).unique()))
+    
+    with col2:
+        excluded_pods = st.multiselect(
+            "2. Exclude Ports of Discharge (optional):",
+            options=all_pods
+        )
 
     if len(selected_files) >= 2:
         pivots_to_compare = {name: pivots_dict[name] for name in selected_files}
         
         comparison_df = compare_multiple_pivots(pivots_to_compare)
         
+        # Filter out excluded PODs
+        if excluded_pods:
+            comparison_df = comparison_df[~comparison_df['Port of Discharge'].isin(excluded_pods)]
+
+        st.markdown("---")
         st.header("📊 Summary of Total Containers per Port of Discharge")
-        summary_table = create_summary_table(pivots_dict, comparison_df)
+        summary_table = create_summary_table(comparison_df)
         
         if not summary_table.empty:
             st.dataframe(style_dataframe_center(summary_table.set_index(summary_table.columns[0])), use_container_width=True)
@@ -385,12 +378,9 @@ else:
         st.subheader(f"Detailed Comparison & Forecast Result: {title}")
         
         if not comparison_df.empty:
-            # Add cluster information to the main DataFrame
-            df_with_clusters = add_cluster_info(comparison_df)
-            
-            # Prepare the table for display (without weight columns)
-            display_cols = [col for col in df_with_clusters.columns if not col.startswith('Weight')]
-            st.dataframe(style_dataframe_center(df_with_clusters[display_cols]), use_container_width=True)
+            # Prepare the table for display (without weight columns and clusters)
+            display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
+            st.dataframe(style_dataframe_center(comparison_df[display_cols]), use_container_width=True)
 
             st.markdown("---")
             st.header("🎯 Cluster Analysis")
@@ -401,7 +391,7 @@ else:
                 help="This will group the Bays into the selected number of ranges for analysis."
             )
             
-            # Re-add cluster information based on user input
+            # Add cluster information based on user input
             df_with_clusters = add_cluster_info(comparison_df, num_clusters)
 
             st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
