@@ -150,7 +150,7 @@ def create_summarized_cluster_table(df_with_clusters):
     return cluster_pivot
 
 def create_macro_slot_table(df_with_clusters):
-    """ Creates the Macro Slot Needs table based on the forecast. """
+    """ Creates the Macro Slot Needs table from the forecast. """
     if df_with_clusters.empty or 'Forecast (Next Vessel)' not in df_with_clusters.columns: return pd.DataFrame()
     df = df_with_clusters[df_with_clusters['Forecast (Next Vessel)'] > 0].copy()
     if df.empty: return pd.DataFrame()
@@ -218,29 +218,56 @@ def create_colored_weight_chart(df_with_clusters):
     else:
         st.info("No forecast weight data to display in the chart.")
         
-def style_table(df, align='left', use_pod_colors=False):
-    """ Applies alignment and optional header coloring to a DataFrame. """
-    styles = [{'selector': 'th, td', 'props': [('text-align', align)]}]
+def style_analysis_table(df, highlight_cols=None):
+    """
+    Applies advanced styling: left-align, POD header colors, and highlights key columns.
+    """
+    if highlight_cols is None:
+        highlight_cols = []
     
-    if use_pod_colors:
-        pods = set()
-        for col in df.columns:
-            if isinstance(col, str):
-                parts = col.split()
-                if len(parts) > 1:
-                    pods.add(parts[0])
+    # Base styler object with left alignment
+    styler = df.style.set_properties(**{'text-align': 'left'})
+    
+    # Define highlight color
+    highlight_color = '#4a4a4a' # A darker grey for better contrast
+    
+    # Identify unique PODs for coloring headers
+    pods = set()
+    for col in df.columns:
+        if isinstance(col, str):
+            parts = col.split()
+            if len(parts) > 1:
+                pods.add(parts[0])
+    
+    colors = ['#2E4053', '#566573', '#34495E', '#212F3D', '#515A5A', '#85929E']
+    color_map = {pod: colors[i % len(colors)] for i, pod in enumerate(sorted(list(pods)))}
 
-        colors = ['#2E4053', '#566573', '#34495E', '#212F3D', '#515A5A', '#85929E']
-        color_map = {pod: colors[i % len(colors)] for i, pod in enumerate(sorted(list(pods)))}
+    # Function to apply styles based on column name
+    def highlight_and_color(col):
+        # Base style for all columns
+        styles = ['' for _ in col]
+        
+        # Highlight key data columns
+        if col.name in highlight_cols:
+            styles = [f'background-color: {highlight_color}; font-weight: bold;' for _ in col]
+        
+        return styles
 
-        for i, col_name in enumerate(df.columns):
-            pod_in_col = next((pod for pod in color_map if pod in col_name), None)
-            if pod_in_col:
-                styles.append({
-                    'selector': f'th.col_heading.level0.col{i}',
-                    'props': [('background-color', color_map[pod_in_col]), ('color', 'white')]
-                })
-    return df.style.set_table_styles(styles)
+    styler = styler.apply(highlight_and_color, axis=0)
+
+    # Style headers using CSS selectors
+    header_styles = [{'selector': 'th', 'props': [('text-align', 'left')]}]
+    for i, col_name in enumerate(df.columns):
+        pod_in_col = next((pod for pod in color_map if pod in col_name), None)
+        if pod_in_col:
+            header_styles.append({
+                'selector': f'th.col_heading.level0.col{i}',
+                'props': [('background-color', color_map[pod_in_col]), ('color', 'white')]
+            })
+    
+    styler = styler.set_table_styles(header_styles)
+    
+    return styler
 
 # --- STREAMLIT APP LAYOUT ---
 
@@ -301,18 +328,18 @@ else:
         st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
         cluster_table = create_summarized_cluster_table(df_with_clusters)
         if not cluster_table.empty:
-            st.dataframe(style_table(cluster_table.set_index('CLUSTER'), use_pod_colors=True, align='left'), use_container_width=True)
+            st.dataframe(style_analysis_table(cluster_table.set_index('CLUSTER'), highlight_cols=['Total Boxes']), use_container_width=True)
 
         st.subheader("Macro Slot Needs")
         macro_slot_table = create_macro_slot_table(df_with_clusters)
         if not macro_slot_table.empty:
-            st.dataframe(style_table(macro_slot_table.set_index('CLUSTER'), use_pod_colors=True, align='left'), use_container_width=True)
+            st.dataframe(style_analysis_table(macro_slot_table.set_index('CLUSTER'), highlight_cols=['Total Slot Needs']), use_container_width=True)
         
         st.markdown("---")
         
         with st.expander("Show Detailed Comparison & Forecast Table"):
             display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-            st.dataframe(style_table(comparison_df[display_cols], align='left'), use_container_width=True)
+            st.dataframe(comparison_df[display_cols].style.set_properties(**{'text-align': 'left'}), use_container_width=True)
             
         st.header("⚖️ Forecast Weight (VGM) Chart per Bay")
         create_colored_weight_chart(df_with_clusters)
