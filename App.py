@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import io
 import altair as alt
-import base64
 
 # Page configuration
 st.set_page_config(page_title="EDI Forecaster", layout="wide")
@@ -219,31 +218,18 @@ def create_colored_weight_chart(df_with_clusters):
     else:
         st.info("No forecast weight data to display in the chart.")
 
-def generate_copy_button(df, key_suffix):
-    """ Generates a button to copy a DataFrame to the clipboard. """
-    csv = df.to_csv(sep='\t', index=False)
-    b64 = base64.b64encode(csv.encode()).decode()
-    button_id = f"copy-button-{key_suffix}"
+def generate_excel_download_link(tables_dict):
+    """ Generates a button to download multiple DataFrames as a single Excel file. """
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        for sheet_name, df in tables_dict.items():
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
     
-    st.markdown(
-        f"""
-        <a download="data.csv" id="{button_id}" href="data:file/csv;base64,{b64}">
-            <button style="padding: 6px 12px; border-radius: 5px; background-color: #3498db; color: white; border: none; cursor: pointer;">
-                📋 Copy to Clipboard
-            </button>
-        </a>
-        <script>
-        document.getElementById("{button_id}").addEventListener("click", function(event) {{
-            event.preventDefault();
-            navigator.clipboard.writeText(atob("{b64}")).then(function() {{
-                // Optional: show a success message
-            }}, function(err) {{
-                console.error('Could not copy text: ', err);
-            }});
-        }});
-        </script>
-        """,
-        unsafe_allow_html=True
+    st.download_button(
+        label="📥 Export All Tables to Excel",
+        data=output.getvalue(),
+        file_name="edi_analysis_export.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
 # --- STREAMLIT APP LAYOUT ---
@@ -306,21 +292,29 @@ else:
         cluster_table = create_summarized_cluster_table(df_with_clusters)
         if not cluster_table.empty:
             st.dataframe(cluster_table, use_container_width=True)
-            generate_copy_button(cluster_table, "cluster")
-
 
         st.subheader("Macro Slot Needs")
         macro_slot_table = create_macro_slot_table(df_with_clusters)
         if not macro_slot_table.empty:
             st.dataframe(macro_slot_table.set_index('CLUSTER'), use_container_width=True)
-            generate_copy_button(macro_slot_table, "macro")
         
         st.markdown("---")
         
+        # --- Export Button Section ---
+        st.header("📥 Export Results")
+        if not cluster_table.empty and not macro_slot_table.empty:
+            export_data = {
+                "Forecast Allocation": cluster_table,
+                "Macro Slot Needs": macro_slot_table,
+                "Detailed Data": comparison_df
+            }
+            generate_excel_download_link(export_data)
+        
+        st.markdown("---")
+
         with st.expander("Show Detailed Comparison & Forecast Table"):
             display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
             st.dataframe(comparison_df[display_cols], use_container_width=True)
-            generate_copy_button(comparison_df[display_cols], "detailed")
-
+            
         st.header("⚖️ Forecast Weight (VGM) Chart per Bay")
         create_colored_weight_chart(df_with_clusters)
