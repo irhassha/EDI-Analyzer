@@ -312,6 +312,43 @@ def create_colored_weight_chart(df_with_clusters):
     else:
         st.info("No forecast weight data to display in the chart.")
 
+def create_summary_chart(summary_df):
+    """
+    Creates and displays a grouped bar chart for the summary data.
+    """
+    # Exclude the TOTAL row for charting
+    chart_data = summary_df[summary_df['Port of Discharge'] != '**TOTAL**'].copy()
+
+    if chart_data.empty:
+        return
+
+    # Melt the dataframe to have a long format suitable for Altair
+    try:
+        melted_df = pd.melt(
+            chart_data,
+            id_vars=['Port of Discharge'],
+            var_name='Source',
+            value_name='Container Count'
+        )
+    except KeyError:
+        # This can happen if there are no count/forecast columns
+        st.warning("Could not generate summary chart due to missing data.")
+        return
+
+
+    # Clean up the 'Source' names for the legend
+    melted_df['Source'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
+
+    chart = alt.Chart(melted_df).mark_bar().encode(
+        x=alt.X('Port of Discharge:N', sort='-y', title='Port of Discharge'),
+        y=alt.Y('Container Count:Q', title='Total Container Count'),
+        color=alt.Color('Source:N', title='Data Source'),
+        tooltip=['Port of Discharge', 'Source', 'Container Count']
+    ).properties(
+        title='Historical and Forecasted Container Counts per POD'
+    )
+    st.altair_chart(chart, use_container_width=True)
+
 def style_dataframe_left(df):
     """
     Applies left alignment to both headers and cells of a DataFrame.
@@ -372,7 +409,8 @@ else:
         summary_table = create_summary_table(comparison_df)
         
         if not summary_table.empty:
-            st.dataframe(style_dataframe_left(summary_table.set_index(summary_table.columns[0])), use_container_width=True)
+            create_summary_chart(summary_table)
+            # st.dataframe(style_dataframe_left(summary_table.set_index(summary_table.columns[0])), use_container_width=True)
         else:
             st.warning("No valid data to create a summary.")
             
