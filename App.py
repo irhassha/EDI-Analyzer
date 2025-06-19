@@ -188,7 +188,6 @@ def create_summary_table(pivots_dict, detailed_forecast_df):
         
         if 'Forecast Weight (KGM)' in detailed_forecast_df.columns:
             forecast_summary_weight = detailed_forecast_df.groupby('Port of Discharge')['Forecast Weight (KGM)'].sum()
-            final_summary['Forecast Weight (KGM)'] = forecast_summary_weight
             final_summary['Forecast Weight (KGM)'] = final_summary['Forecast Weight (KGM)'].fillna(0)
 
     # Add a Total row
@@ -205,8 +204,8 @@ def add_cluster_info(df, num_clusters=6):
     """
     Adds cluster information to a DataFrame based on the 'Bay' column.
     """
-    if df.empty or 'Bay' not in df.columns:
-        return df
+    if df.empty or 'Bay' not in df.columns or df['Bay'].nunique() < num_clusters:
+        return df.assign(**{'Cluster ID': 0, 'Bay Range': 'N/A'})
 
     df_clustered = df.copy()
     try:
@@ -215,20 +214,21 @@ def add_cluster_info(df, num_clusters=6):
         try:
             df_clustered['Cluster ID'], _ = pd.cut(df_clustered['Bay'], bins=num_clusters, labels=False, duplicates='drop')
         except ValueError:
-            df_clustered['Cluster ID'] = 0 # Fallback if all else fails
+            # Fallback if clustering fails completely
+            df_clustered['Cluster ID'] = 0 
 
     df_clustered['Bay Range'] = df_clustered.groupby('Cluster ID')['Bay'].transform(lambda x: f"{x.min()}-{x.max()}")
     return df_clustered
 
-def create_summarized_cluster_table(comparison_df):
+def create_summarized_cluster_table(df_with_clusters):
     """
     Creates a cluster summary table separating 20ft & 40ft containers,
     displaying the forecast count of boxes.
     """
-    if comparison_df.empty or 'Forecast (Next Vessel)' not in comparison_df.columns:
+    if df_with_clusters.empty or 'Forecast (Next Vessel)' not in df_with_clusters.columns:
         return pd.DataFrame()
 
-    df = comparison_df.copy()
+    df = df_with_clusters.copy()
     df = df[df['Forecast (Next Vessel)'] > 0] 
 
     if df.empty:
@@ -240,7 +240,7 @@ def create_summarized_cluster_table(comparison_df):
     
     # Pivot to get the sum of forecast per cluster and allocation
     cluster_pivot = df.pivot_table(
-        index=['Cluster ID', 'Bay Range'],
+        index=['Bay Range'],
         columns='Allocation Column',
         values='Forecast (Next Vessel)', 
         aggfunc='sum',
@@ -249,20 +249,19 @@ def create_summarized_cluster_table(comparison_df):
     
     # Final formatting for the output table
     cluster_pivot = cluster_pivot.reset_index()
-    cluster_pivot.drop(columns='Cluster ID', inplace=True)
     cluster_pivot.insert(0, 'CLUSTER', range(1, len(cluster_pivot) + 1))
     cluster_pivot = cluster_pivot.rename(columns={'Bay Range': 'BAY'})
     
     return cluster_pivot
 
-def create_macro_slot_table(comparison_df):
+def create_macro_slot_table(df_with_clusters):
     """
     Creates the Macro Slot Needs table based on the forecast.
     """
-    if comparison_df.empty or 'Forecast (Next Vessel)' not in comparison_df.columns:
+    if df_with_clusters.empty or 'Forecast (Next Vessel)' not in df_with_clusters.columns:
         return pd.DataFrame()
 
-    df = comparison_df.copy()
+    df = df_with_clusters.copy()
     df = df[df['Forecast (Next Vessel)'] > 0]
 
     if df.empty:
@@ -274,14 +273,14 @@ def create_macro_slot_table(comparison_df):
     
     # Pivot to get the sum of forecast per cluster and allocation
     cluster_pivot = df.pivot_table(
-        index=['Cluster ID', 'Bay Range'],
+        index=['Bay Range'],
         columns='Allocation Column',
         values='Forecast (Next Vessel)',
         aggfunc='sum',
         fill_value=0
     )
 
-    # --- SLOT CALCULATION LOGIC ---
+    # SLOT CALCULATION LOGIC
     slot_df = cluster_pivot.copy()
     for col in slot_df.columns:
         if ' 20' in col:
@@ -296,22 +295,21 @@ def create_macro_slot_table(comparison_df):
 
     # Final formatting
     slot_df = slot_df.astype(int).reset_index()
-    slot_df.drop(columns='Cluster ID', inplace=True)
     slot_df.insert(0, 'CLUSTER', range(1, len(slot_df) + 1))
     slot_df = slot_df.rename(columns={'Bay Range': 'BAY'})
 
     return slot_df
 
-def create_colored_weight_chart(comparison_df):
+def create_colored_weight_chart(df_with_clusters):
     """
     Creates and displays a colored bar chart for the total forecast weight per Bay,
     colored by cluster.
     """
-    if comparison_df.empty or 'Forecast Weight (KGM)' not in comparison_df.columns or 'Bay Range' not in comparison_df.columns:
+    if df_with_clusters.empty or 'Forecast Weight (KGM)' not in df_with_clusters.columns or 'Bay Range' not in df_with_clusters.columns:
         st.info("Not enough data to create the weight chart by cluster.")
         return
 
-    weight_summary = comparison_df.groupby(['Bay', 'Bay Range'])['Forecast Weight (KGM)'].sum().reset_index()
+    weight_summary = df_with_clusters.groupby(['Bay', 'Bay Range'])['Forecast Weight (KGM)'].sum().reset_index()
     weight_summary = weight_summary[weight_summary['Forecast Weight (KGM)'] > 0]
 
     if not weight_summary.empty:
@@ -330,11 +328,9 @@ def create_colored_weight_chart(comparison_df):
 def style_dataframe_center(df):
     """
     Applies center alignment to both headers and cells of a DataFrame.
-    This function now handles the index as well.
     """
     return df.style.set_properties(**{'text-align': 'center'}).set_table_styles([
-        {'selector': 'th.col_heading', 'props': [('text-align', 'center')]},
-        {'selector': 'th.row_heading', 'props': [('text-align', 'center')]}
+        {'selector': 'th, td', 'props': [('text-align', 'center')]}
     ])
 
 # --- STREAMLIT APP LAYOUT ---
@@ -383,26 +379,30 @@ else:
         st.subheader(f"Detailed Comparison & Forecast Result: {title}")
         
         if not comparison_df.empty:
-            # Add cluster information to the main DataFrame
-            df_with_clusters = add_cluster_info(comparison_df)
-            
-            # Prepare the table for display (without weight columns)
-            display_cols = [col for col in df_with_clusters.columns if not col.startswith('Weight') and 'Weight' not in col]
-            st.dataframe(style_dataframe_center(df_with_clusters[display_cols]), use_container_width=True)
+            # Prepare the table for display (without weight columns and clusters)
+            display_cols = [col for col in comparison_df.columns if not col.startswith('Weight') and 'Weight' not in col]
+            st.dataframe(style_dataframe_center(comparison_df[display_cols]), use_container_width=True)
 
             st.markdown("---")
-            st.header("🎯 Forecast Allocation Summary per Cluster (in Boxes)")
-            # Rename columns for clarity before passing to function
-            df_for_cluster = df_with_clusters.rename(columns={'Bay Range': 'Bay Range', 'Cluster ID': 'Cluster ID'})
-            cluster_table = create_summarized_cluster_table(df_for_cluster)
+            st.header("🎯 Cluster Analysis")
+            
+            num_clusters = st.number_input(
+                "Select number of clusters:",
+                min_value=2, max_value=20, value=6, step=1,
+                help="This will group the Bays into the selected number of ranges for analysis."
+            )
+            
+            # Add cluster information to the main DataFrame based on user input
+            df_with_clusters = add_cluster_info(comparison_df, num_clusters)
+
+            st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
+            cluster_table = create_summarized_cluster_table(df_with_clusters)
             
             if not cluster_table.empty:
                 st.dataframe(style_dataframe_center(cluster_table.set_index('CLUSTER')), use_container_width=True)
 
-                st.markdown("---")
-                st.header("⚙️ Macro Slot Needs")
-                df_for_macro = df_with_clusters.rename(columns={'Bay Range': 'Bay Range', 'Cluster ID': 'Cluster ID'})
-                macro_slot_table = create_macro_slot_table(df_for_macro)
+                st.subheader("Macro Slot Needs")
+                macro_slot_table = create_macro_slot_table(df_with_clusters)
                 if not macro_slot_table.empty:
                     st.dataframe(style_dataframe_center(macro_slot_table.set_index('CLUSTER')), use_container_width=True)
             else:
