@@ -269,9 +269,11 @@ with st.sidebar:
         all_pods = []
         if selected_files:
             try:
-                all_pods = sorted(list(pd.concat([parse_edi_to_pivot(f)['Port of Discharge'] for f in uploaded_files if f.name in selected_files]).unique()))
-            except Exception:
-                pass # Fail silently if parsing fails during setup
+                # Use a dictionary to avoid re-parsing files
+                pivots_for_pods = {f.name: parse_edi_to_pivot(f) for f in uploaded_files if f.name in selected_files}
+                all_pods = sorted(list(pd.concat([df['Port of Discharge'] for df in pivots_for_pods.values() if not df.empty]).unique()))
+            except Exception as e:
+                st.error(f"Error getting PODs: {e}")
         
         excluded_pods = st.multiselect("3. Exclude Ports of Discharge (optional):", options=all_pods)
         
@@ -284,8 +286,12 @@ elif 'selected_files' in locals() and len(selected_files) < 2:
     st.warning("Please select at least 2 files in the sidebar to display the comparison.")
 else:
     with st.spinner("Analyzing files..."):
-        # Re-parse only the selected files to be efficient
-        pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files if f.name in selected_files}
+        # Use the already parsed pivots if available
+        if 'pivots_for_pods' in locals() and all(f in pivots_for_pods for f in selected_files):
+             pivots_dict = {name: pivots_for_pods[name] for name in selected_files}
+        else: # Fallback to re-parse
+             pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files if f.name in selected_files}
+
         comparison_df = compare_multiple_pivots(pivots_dict)
         
         if excluded_pods:
@@ -295,33 +301,47 @@ else:
         st.error("Could not generate a valid comparison from the selected files. Please check the files or your settings.")
     else:
         # --- Main content display ---
-        with st.container():
-            st.markdown('<p class="section-header">📊 Summary per Vessel</p>', unsafe_allow_html=True)
-            summary_table = create_summary_table(comparison_df)
-            if not summary_table.empty:
-                create_summary_chart(summary_table)
-            else:
-                st.warning("No valid data to create a summary.")
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<p class="section-header">📊 Summary per Vessel</p>', unsafe_allow_html=True)
+        summary_table = create_summary_table(comparison_df)
+        if not summary_table.empty:
+            create_summary_chart(summary_table)
+        else:
+            st.warning("No valid data to create a summary.")
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        with st.container():
-            st.markdown('<p class="section-header">🎯 Cluster Analysis</p>', unsafe_allow_html=True)
-            df_with_clusters = add_cluster_info(comparison_df, num_clusters)
-            
-            st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
-            cluster_table = create_summarized_cluster_table(df_with_clusters)
-            if not cluster_table.empty:
-                st.dataframe(cluster_table.set_index('CLUSTER'), use_container_width=True)
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<p class="section-header">🎯 Cluster Analysis</p>', unsafe_allow_html=True)
+        df_with_clusters = add_cluster_info(comparison_df, num_clusters)
+        
+        st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
+        cluster_table = create_summarized_cluster_table(df_with_clusters)
+        if not cluster_table.empty:
+            st.dataframe(cluster_table.set_index('CLUSTER'), use_container_width=True)
 
-            st.subheader("Macro Slot Needs")
-            macro_slot_table = create_macro_slot_table(df_with_clusters)
-            if not macro_slot_table.empty:
-                st.dataframe(macro_slot_table.set_index('CLUSTER'), use_container_width=True)
-            
+        st.subheader("Macro Slot Needs")
+        macro_slot_table = create_macro_slot_table(df_with_clusters)
+        if not macro_slot_table.empty:
+            st.dataframe(macro_slot_table.set_index('CLUSTER'), use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
         with st.expander("Show Detailed Comparison & Forecast Table"):
             display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-            st.dataframe(comparison_df[display_cols], use_container_width=True)
             
-        with st.container():
-            st.markdown('<p class="section-header">⚖️ Forecast Weight (VGM) Chart per Bay</p>', unsafe_allow_html=True)
-            create_colored_weight_chart(df_with_clusters)
+            # --- NEW: Styling function for row colors ---
+            unique_pods_for_style = comparison_df['Port of Discharge'].unique()
+            colors = ['#2E4053', '#566573', '#85929E', '#34495E', '#212F3D', '#515A5A']
+            color_map = {pod: colors[i % len(colors)] for i, pod in enumerate(unique_pods_for_style)}
 
+            def highlight_pod_rows(row):
+                color = color_map.get(row['Port of Discharge'], '')
+                return [f'background-color: {color}' for _ in row]
+            
+            # Apply the style
+            styled_df = comparison_df[display_cols].style.apply(highlight_pod_rows, axis=1)
+            st.dataframe(styled_df, use_container_width=True)
+            
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown('<p class="section-header">⚖️ Forecast Weight (VGM) Chart per Bay</p>', unsafe_allow_html=True)
+        create_colored_weight_chart(df_with_clusters)
+        st.markdown('</div>', unsafe_allow_html=True)
