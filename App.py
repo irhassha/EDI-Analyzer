@@ -7,6 +7,15 @@ import altair as alt
 # Page configuration
 st.set_page_config(page_title="EDI File Comparator", layout="wide")
 
+# --- Function to load local CSS ---
+def local_css(file_name):
+    """ Loads a local CSS file. """
+    try:
+        with open(file_name) as f:
+            st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.error(f"'{file_name}' not found. Please make sure the CSS file is in the same directory as the app.")
+
 # --- CORE FUNCTIONS ---
 
 def parse_edi_to_pivot(uploaded_file):
@@ -359,15 +368,11 @@ def create_summary_chart(summary_df):
     
     st.altair_chart(chart, use_container_width=True)
 
-def style_dataframe_left(df):
-    """
-    Applies left alignment to both headers and cells of a DataFrame.
-    """
-    return df.style.set_properties(**{'text-align': 'left'}).set_table_styles([
-        {'selector': 'th, td', 'props': [('text-align', 'left')]}
-    ])
 
 # --- STREAMLIT APP LAYOUT ---
+
+# Load custom CSS file
+local_css("style.css")
 
 st.title("🚢 EDI File Comparator & Forecaster")
 st.caption("Upload EDI files to compare and forecast the load for the next vessel.")
@@ -433,7 +438,7 @@ else:
             if st.checkbox("Show Detailed Comparison Table", value=False):
                 # Prepare the table for display (without weight columns)
                 display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-                st.dataframe(style_dataframe_left(comparison_df[display_cols]), use_container_width=True)
+                st.dataframe(comparison_df[display_cols], use_container_width=True)
 
             st.markdown("---")
             st.header("🎯 Cluster Analysis")
@@ -451,12 +456,12 @@ else:
             cluster_table = create_summarized_cluster_table(df_with_clusters)
             
             if not cluster_table.empty:
-                st.dataframe(style_dataframe_left(cluster_table.set_index('CLUSTER')), use_container_width=True)
+                st.dataframe(cluster_table.set_index('CLUSTER'), use_container_width=True)
 
                 st.subheader("Macro Slot Needs")
                 macro_slot_table = create_macro_slot_table(df_with_clusters)
                 if not macro_slot_table.empty:
-                    st.dataframe(style_dataframe_left(macro_slot_table.set_index('CLUSTER')), use_container_width=True)
+                    st.dataframe(macro_slot_table.set_index('CLUSTER'), use_container_width=True)
             else:
                 st.info("No forecast data to create the cluster allocation table.")
             
