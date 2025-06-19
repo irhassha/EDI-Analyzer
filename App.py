@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import io
 import altair as alt
+import base64
 
 # Page configuration
 st.set_page_config(page_title="EDI Forecaster", layout="wide")
@@ -167,11 +168,11 @@ def create_macro_slot_table(df_with_clusters):
     slot_df['_sort_key'] = slot_df.index.str.split('-').str[0].astype(int)
     slot_df = slot_df.sort_values(by='_sort_key').drop(columns='_sort_key')
     
-    slot_df = slot_df.reset_index().rename(columns={'Bay Range': 'BAY'})
+    slot_df = slot_df.reset_index().drop(columns='Bay Range')
     slot_df.insert(0, 'CLUSTER', range(1, len(slot_df) + 1))
     
     total_col = slot_df.pop('Total Slot Needs')
-    slot_df.insert(2, 'Total Slot Needs', total_col)
+    slot_df.insert(1, 'Total Slot Needs', total_col)
     
     return slot_df
 
@@ -217,50 +218,33 @@ def create_colored_weight_chart(df_with_clusters):
         st.altair_chart(chart, use_container_width=True)
     else:
         st.info("No forecast weight data to display in the chart.")
-        
-def style_table(df, highlight_cols=None, use_pod_colors=False, align='left'):
-    """ Applies alignment and optional header coloring to a DataFrame. """
-    if highlight_cols is None:
-        highlight_cols = []
-    
-    # Base styler object
-    styler = df.style.set_properties(**{'text-align': align})
-    
-    # Define highlight color
-    highlight_color = '#4a4a4a' # A darker grey for better contrast
-    
-    # Function to apply styles based on column name
-    def highlight_and_color(col):
-        if col.name in highlight_cols:
-            return [f'background-color: {highlight_color}; font-weight: bold;'] * len(col)
-        return [''] * len(col)
 
-    styler = styler.apply(highlight_and_color, axis=0)
-
-    # Style headers using CSS selectors
-    header_styles = [{'selector': 'th, td', 'props': [('text-align', align)]}]
-    if use_pod_colors:
-        pods = set()
-        for col in df.columns:
-            if isinstance(col, str):
-                parts = col.split()
-                if len(parts) > 1:
-                    pods.add(parts[0])
+def generate_copy_button(df, key_suffix):
+    """ Generates a button to copy a DataFrame to the clipboard. """
+    csv = df.to_csv(sep='\t', index=False)
+    b64 = base64.b64encode(csv.encode()).decode()
+    button_id = f"copy-button-{key_suffix}"
     
-        colors = ['#2E4053', '#566573', '#34495E', '#212F3D', '#515A5A', '#85929E']
-        color_map = {pod: colors[i % len(colors)] for i, pod in enumerate(sorted(list(pods)))}
-
-        for i, col_name in enumerate(df.columns):
-            pod_in_col = next((pod for pod in color_map if pod in col_name), None)
-            if pod_in_col:
-                header_styles.append({
-                    'selector': f'th.col_heading.level0.col{i}',
-                    'props': [('background-color', color_map[pod_in_col]), ('color', 'white')]
-                })
-    
-    styler = styler.set_table_styles(header_styles)
-    
-    return styler
+    st.markdown(
+        f"""
+        <a download="data.csv" id="{button_id}" href="data:file/csv;base64,{b64}">
+            <button style="padding: 6px 12px; border-radius: 5px; background-color: #3498db; color: white; border: none; cursor: pointer;">
+                📋 Copy to Clipboard
+            </button>
+        </a>
+        <script>
+        document.getElementById("{button_id}").addEventListener("click", function(event) {{
+            event.preventDefault();
+            navigator.clipboard.writeText(atob("{b64}")).then(function() {{
+                // Optional: show a success message
+            }}, function(err) {{
+                console.error('Could not copy text: ', err);
+            }});
+        }});
+        </script>
+        """,
+        unsafe_allow_html=True
+    )
 
 # --- STREAMLIT APP LAYOUT ---
 
@@ -321,18 +305,22 @@ else:
         st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
         cluster_table = create_summarized_cluster_table(df_with_clusters)
         if not cluster_table.empty:
-            st.dataframe(style_table(cluster_table.set_index('CLUSTER'), use_pod_colors=False, align='left'), use_container_width=True)
+            st.dataframe(cluster_table, use_container_width=True)
+            generate_copy_button(cluster_table, "cluster")
+
 
         st.subheader("Macro Slot Needs")
         macro_slot_table = create_macro_slot_table(df_with_clusters)
         if not macro_slot_table.empty:
-            st.dataframe(style_table(macro_slot_table.set_index('CLUSTER'), use_pod_colors=True, highlight_cols=['CLUSTER', 'Total Slot Needs'], align='left'), use_container_width=True)
+            st.dataframe(macro_slot_table.set_index('CLUSTER'), use_container_width=True)
+            generate_copy_button(macro_slot_table, "macro")
         
         st.markdown("---")
         
         with st.expander("Show Detailed Comparison & Forecast Table"):
             display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-            st.dataframe(comparison_df[display_cols].style.set_properties(**{'text-align': 'left'}), use_container_width=True)
-            
+            st.dataframe(comparison_df[display_cols], use_container_width=True)
+            generate_copy_button(comparison_df[display_cols], "detailed")
+
         st.header("⚖️ Forecast Weight (VGM) Chart per Bay")
         create_colored_weight_chart(df_with_clusters)
