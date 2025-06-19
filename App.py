@@ -314,7 +314,7 @@ def create_colored_weight_chart(df_with_clusters):
 
 def create_summary_chart(summary_df):
     """
-    Creates and displays a grouped bar chart for the summary data.
+    Creates and displays a stacked bar chart for the summary data, showing composition per vessel.
     """
     # Exclude the TOTAL row for charting
     chart_data = summary_df[summary_df['Port of Discharge'] != '**TOTAL**'].copy()
@@ -340,12 +340,12 @@ def create_summary_chart(summary_df):
     melted_df['Source'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
 
     chart = alt.Chart(melted_df).mark_bar().encode(
-        x=alt.X('Port of Discharge:N', sort='-y', title='Port of Discharge'),
+        x=alt.X('Source:N', sort=None, title='Data Source (Vessel/Forecast)'),
         y=alt.Y('Container Count:Q', title='Total Container Count'),
-        color=alt.Color('Source:N', title='Data Source'),
-        tooltip=['Port of Discharge', 'Source', 'Container Count']
+        color=alt.Color('Port of Discharge:N', title='Port of Discharge'),
+        tooltip=['Source', 'Port of Discharge', 'Container Count']
     ).properties(
-        title='Historical and Forecasted Container Counts per POD'
+        title='Container Composition per Vessel and Forecast'
     )
     st.altair_chart(chart, use_container_width=True)
 
@@ -410,7 +410,6 @@ else:
         
         if not summary_table.empty:
             create_summary_chart(summary_table)
-            # st.dataframe(style_dataframe_left(summary_table.set_index(summary_table.columns[0])), use_container_width=True)
         else:
             st.warning("No valid data to create a summary.")
             
