@@ -331,8 +331,8 @@ def style_dataframe_center(df):
     """
     Applies center alignment to both headers and cells of a DataFrame.
     """
-    return df.style.set_table_styles([
-        dict(selector="th, td", props=[("text-align", "center")])
+    return df.style.set_properties(**{'text-align': 'center'}).set_table_styles([
+        {'selector': 'th', 'props': [('text-align', 'center')]}
     ])
 
 # --- STREAMLIT APP LAYOUT ---
@@ -367,7 +367,7 @@ else:
         
         comparison_df = compare_multiple_pivots(pivots_to_compare)
         
-        st.header("📊 Summary of Total Containers & Weight per Port of Discharge")
+        st.header("📊 Summary of Total Containers per Port of Discharge")
         summary_table = create_summary_table(pivots_dict, comparison_df)
         
         if not summary_table.empty:
@@ -386,7 +386,7 @@ else:
             
             # Prepare the table for display (without weight columns)
             display_cols = [col for col in df_with_clusters.columns if not col.startswith('Weight') and 'Weight' not in col]
-            st.dataframe(style_dataframe_center(df_with_clusters[display_cols]))
+            st.dataframe(style_dataframe_center(df_with_clusters[display_cols]), use_container_width=True)
 
             st.markdown("---")
             st.header("🎯 Forecast Allocation Summary per Cluster (in Boxes)")
