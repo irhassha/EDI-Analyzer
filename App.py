@@ -111,6 +111,45 @@ def compare_multiple_pivots(pivots_dict_selected):
         merged_df['Forecast Weight (KGM)'] = merged_df[weight_cols].apply(forecast_next_value_wma, axis=1).astype(int)
     return merged_df.reset_index().sort_values(by="Bay").reset_index(drop=True)
 
+def create_forecast_vs_actual_table(forecast_df, actual_df):
+    """ Compares the forecast data with the actual data from the current EDI. """
+    if forecast_df.empty or actual_df.empty:
+        return pd.DataFrame(), 0
+
+    # Prepare forecast data
+    forecast_subset = forecast_df[['Bay', 'Port of Discharge', 'Forecast (Next Vessel)']].rename(
+        columns={'Forecast (Next Vessel)': 'Forecast Count'}
+    )
+
+    # Prepare actual data
+    actual_subset = actual_df[['Bay', 'Port of Discharge', 'Container Count']].rename(
+        columns={'Container Count': 'Actual Count'}
+    )
+
+    # Merge forecast and actual data
+    comparison_table = pd.merge(
+        forecast_subset,
+        actual_subset,
+        on=['Bay', 'Port of Discharge'],
+        how='outer'
+    ).fillna(0)
+
+    # Calculate the difference (margin of error)
+    comparison_table['Difference'] = comparison_table['Actual Count'] - comparison_table['Forecast Count']
+    
+    # Calculate accuracy score
+    total_actual = comparison_table['Actual Count'].sum()
+    total_abs_diff = comparison_table['Difference'].abs().sum()
+    
+    if total_actual == 0:
+        accuracy = 0
+    else:
+        accuracy = (1 - (total_abs_diff / total_actual)) * 100
+        accuracy = max(0, accuracy) # Ensure accuracy is not negative
+
+    return comparison_table, accuracy
+
+
 def create_summary_table(comparison_df):
     """ Creates a summary table from the main comparison dataframe. """
     if comparison_df.empty: return pd.DataFrame()
@@ -223,7 +262,10 @@ def generate_excel_download_link(tables_dict):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         for sheet_name, df in tables_dict.items():
-            df.to_excel(writer, sheet_name=sheet_name, index=False)
+            if isinstance(df, pd.io.formats.style.Styler):
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                df.to_excel(writer, sheet_name=sheet_name, index=False)
     
     st.download_button(
         label="📥 Export All Tables to Excel",
@@ -239,10 +281,12 @@ st.caption("Upload EDI files to compare and forecast the load for the next vesse
 
 with st.sidebar:
     st.header("⚙️ Analysis Settings")
-    uploaded_files = st.file_uploader("1. Upload your .EDI files here", type=["edi", "txt"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("1. Upload historical EDI files", type=["edi", "txt"], accept_multiple_files=True)
+    current_edi_file = st.file_uploader("2. Upload current EDI file for validation (optional)", type=["edi", "txt"])
+    
     if uploaded_files:
         file_names = list(p.name for p in uploaded_files)
-        selected_files = st.multiselect("2. Select files (in order):", options=file_names, default=file_names)
+        selected_files = st.multiselect("3. Select files (in order):", options=file_names, default=file_names)
         
         all_pods = []
         if selected_files:
@@ -252,15 +296,15 @@ with st.sidebar:
             except Exception as e:
                 st.error(f"Error getting PODs: {e}")
         
-        excluded_pods = st.multiselect("3. Exclude Ports of Discharge (optional):", options=all_pods)
+        excluded_pods = st.multiselect("4. Exclude Ports of Discharge (optional):", options=all_pods)
         
-        num_clusters = st.number_input("4. Select number of clusters:", min_value=2, max_value=20, value=6, step=1, help="This will group the Bays into the selected number of ranges for analysis.")
+        num_clusters = st.number_input("5. Select number of clusters:", min_value=2, max_value=20, value=6, step=1, help="This will group the Bays into the selected number of ranges for analysis.")
 
 
 if not uploaded_files or len(uploaded_files) < 2:
-    st.info("ℹ️ Please upload at least 2 files in the sidebar to start the analysis.")
+    st.info("ℹ️ Please upload at least 2 historical files in the sidebar to start the analysis.")
 elif 'selected_files' in locals() and len(selected_files) < 2:
-    st.warning("Please select at least 2 files in the sidebar to display the comparison.")
+    st.warning("Please select at least 2 historical files in the sidebar to display the comparison.")
 else:
     with st.spinner("Analyzing files..."):
         if 'pivots_for_pods' in locals() and all(f in pivots_for_pods for f in selected_files):
@@ -276,6 +320,18 @@ else:
     if comparison_df.empty:
         st.error("Could not generate a valid comparison from the selected files. Please check the files or your settings.")
     else:
+        # --- NEW: Forecast vs Actual Section ---
+        if current_edi_file:
+            st.header("✔︎ Forecast vs. Actual Comparison")
+            actual_df = parse_edi_to_pivot(current_edi_file)
+            if not actual_df.empty:
+                validation_table, accuracy_score = create_forecast_vs_actual_table(comparison_df, actual_df)
+                st.metric(label="Forecast Accuracy Score", value=f"{accuracy_score:.2f}%")
+                st.dataframe(validation_table.style.set_properties(**{'text-align': 'center'}), use_container_width=True)
+            else:
+                st.warning(f"Could not parse the current EDI file: {current_edi_file.name}")
+            st.markdown("---")
+
         st.header("📊 Summary per Vessel")
         summary_table = create_summary_table(comparison_df)
         if not summary_table.empty:
@@ -302,13 +358,17 @@ else:
         
         # --- Export Button Section ---
         st.header("📥 Export Results")
-        if not cluster_table.empty and not macro_slot_table.empty:
-            export_data = {
-                "Forecast Allocation": cluster_table,
-                "Macro Slot Needs": macro_slot_table,
-                "Detailed Data": comparison_df
-            }
-            generate_excel_download_link(export_data)
+        tables_to_export = {}
+        if not cluster_table.empty:
+            tables_to_export["Forecast Allocation"] = cluster_table
+        if not macro_slot_table.empty:
+            tables_to_export["Macro Slot Needs"] = macro_slot_table
+        if 'validation_table' in locals() and not validation_table.empty:
+            tables_to_export["Forecast vs Actual"] = validation_table
+        
+        tables_to_export["Detailed Data"] = comparison_df
+        
+        generate_excel_download_link(tables_to_export)
         
         st.markdown("---")
 
