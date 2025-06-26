@@ -127,6 +127,23 @@ def compare_multiple_pivots(pivots_dict_selected, detail_level='Bay'):
         
     return merged_df
 
+def create_summary_table(comparison_df):
+    """ Creates a summary table from the main comparison dataframe. """
+    if comparison_df.empty: return pd.DataFrame()
+    summary_cols = [col for col in comparison_df.columns if col.startswith('Count') or 'Forecast (Next Vessel)' in col]
+    # Add Port of Discharge for grouping
+    grouping_cols = ['Port of Discharge'] + summary_cols
+    
+    # Group by POD and sum up the values
+    summary = comparison_df[grouping_cols].groupby('Port of Discharge').sum().reset_index()
+
+    # Add a Total row
+    total_row = summary[summary_cols].sum().to_frame().T
+    total_row['Port of Discharge'] = "**TOTAL**"
+    
+    final_summary = pd.concat([summary, total_row], ignore_index=True)
+    
+    return final_summary
 
 def add_cluster_info(df, num_clusters=6):
     """ Adds cluster information to a DataFrame. """
@@ -250,7 +267,6 @@ with st.sidebar:
     st.header("⚙️ Analysis Settings")
     uploaded_files = st.file_uploader("1. Upload historical EDI files", type=["edi", "txt"], accept_multiple_files=True)
     
-    # --- NEW: Analysis Mode Selection ---
     analysis_mode = st.radio(
         "2. Select Analysis Mode:",
         ('Detailed (per Bay)', 'Summary (per POD)')
@@ -270,7 +286,6 @@ with st.sidebar:
         
         excluded_pods = st.multiselect("4. Exclude Ports of Discharge (optional):", options=all_pods)
         
-        # Only show cluster selection in detailed mode
         if analysis_mode == 'Detailed (per Bay)':
             num_clusters = st.number_input("5. Select number of clusters:", min_value=2, max_value=20, value=6, step=1, help="This will group the Bays into the selected number of ranges for analysis.")
 
@@ -286,10 +301,9 @@ else:
         else:
              pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files if f.name in selected_files}
 
-        # --- Dynamic processing based on mode ---
         if analysis_mode == 'Detailed (per Bay)':
             comparison_df = compare_multiple_pivots(pivots_dict, detail_level='Bay')
-        else: # Summary mode
+        else:
             comparison_df = compare_multiple_pivots(pivots_dict, detail_level='POD')
         
         if excluded_pods:
@@ -298,7 +312,6 @@ else:
     if comparison_df.empty:
         st.error("Could not generate a valid comparison from the selected files. Please check the files or your settings.")
     else:
-        # --- Display logic based on mode ---
         
         if analysis_mode == 'Summary (per POD)':
             st.header("📊 Summary Comparison per Port of Discharge")
@@ -307,6 +320,7 @@ else:
             
         elif analysis_mode == 'Detailed (per Bay)':
             st.header("📊 Summary per Vessel")
+            # --- This is the failing call ---
             summary_table = create_summary_table(comparison_df)
             if not summary_table.empty:
                 create_summary_chart(summary_table)
