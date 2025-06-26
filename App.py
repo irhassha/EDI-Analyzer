@@ -242,6 +242,30 @@ def create_summary_chart(comparison_df):
     chart = (bars + text).properties(title='Container Composition per Vessel and Forecast')
     st.altair_chart(chart, use_container_width=True)
 
+def create_validation_summary_chart(summary_validation_table):
+    """ Creates a grouped bar chart for forecast vs actual summary data. """
+    if summary_validation_table.empty:
+        return
+
+    melted_df = pd.melt(
+        summary_validation_table,
+        id_vars=['Port of Discharge'],
+        value_vars=['Forecast Count', 'Actual Count'],
+        var_name='Type',
+        value_name='Count'
+    )
+    
+    chart = alt.Chart(melted_df).mark_bar().encode(
+        x=alt.X('Port of Discharge:N', sort='-y', title='Port of Discharge'),
+        y=alt.Y('Count:Q', title='Container Count'),
+        color=alt.Color('Type:N', title='Type'),
+        xOffset='Type:N'
+    ).properties(
+        title='Forecast vs. Actual Count per Port of Discharge'
+    )
+    st.altair_chart(chart, use_container_width=True)
+
+
 def create_colored_weight_chart(df_with_clusters):
     """ Creates a colored bar chart for the total forecast weight per Bay. """
     if df_with_clusters.empty or 'Forecast Weight (KGM)' not in df_with_clusters.columns or 'Bay Range' not in df_with_clusters.columns:
@@ -356,10 +380,10 @@ else:
                     
                     st.subheader("Score 1: Overall and per POD Accuracy")
                     st.metric(label="Overall Accuracy Score", value=f"{sa:.2f}%")
-                    st.dataframe(style_dataframe(stbl.set_index('Port of Discharge')), use_container_width=True)
+                    create_validation_summary_chart(stbl)
                     
                     st.subheader("Score 2: Detailed (per Bay, per POD) Accuracy")
-                    st.metric(label="Detailed Accuracy Score", value=f"{da:.2f}%")
+                    st.metric(label="Detailed Accuracy Score", value=f"{da:g}%")
                     with st.expander("Show Detailed Validation Table"):
                         st.dataframe(style_dataframe(dt), use_container_width=True)
                 else:
