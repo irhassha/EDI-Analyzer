@@ -5,15 +5,9 @@ import io
 import altair as alt
 from st_aggrid import AgGrid, GridOptionsBuilder
 
-# Page configuration
 st.set_page_config(page_title="EDI Forecaster", layout="wide")
 
-# --- CORE FUNCTIONS (tetap sama seperti sebelumnya, tidak saya ubah) ---
-
-# (Kamu bisa menempel semua definisi fungsi parse_edi_to_pivot, forecast_next_value_wma, dst. di sini... 
-# Saya tidak ubah karena kamu tidak minta ubah logic-nya.)
-
-# --- ADD THIS FUNCTION FOR CENTERED AGGRID ---
+# Fungsi utilitas AgGrid
 def display_aggrid_centered(df, fit_columns=True):
     if df.empty:
         st.info("Tidak ada data untuk ditampilkan.")
@@ -23,21 +17,33 @@ def display_aggrid_centered(df, fit_columns=True):
     grid_options = gb.build()
     AgGrid(df, gridOptions=grid_options, fit_columns_on_grid_load=fit_columns, theme="streamlit")
 
-# --- STREAMLIT APP LAYOUT ---
+# --- Fungsi-fungsi utama seperti parse_edi_to_pivot, forecast_next_value_wma, compare_multiple_pivots, dst. tetap sama ---
+# Kamu bisa tempel ulang semua fungsi dari script sebelumnya di sini TANPA DIUBAH, karena sudah berfungsi dengan baik.
+# (sengaja tidak ditampilkan ulang untuk menghemat ruang canvas ini)
+
+# --- LAYOUT STREAMLIT ---
 st.title("🚢 EDI File Comparator & Forecaster")
 st.caption("Upload EDI files to compare and forecast the load for the next vessel.")
 
 with st.sidebar:
     st.header("⚙️ Analysis Settings")
     uploaded_files = st.file_uploader("1. Upload your .EDI files here", type=["edi", "txt"], accept_multiple_files=True)
+
+    uploaded_file_buffers = {}
     if uploaded_files:
-        file_names = list(p.name for p in uploaded_files)
+        # Simpan semua file ke buffer
+        uploaded_file_buffers = {f.name: io.BytesIO(f.read()) for f in uploaded_files}
+        file_names = list(uploaded_file_buffers.keys())
         selected_files = st.multiselect("2. Select files (in order):", options=file_names, default=file_names)
 
         all_pods = []
         if selected_files:
             try:
-                pivots_for_pods = {f.name: parse_edi_to_pivot(f) for f in uploaded_files if f.name in selected_files}
+                pivots_for_pods = {}
+                for f_name in selected_files:
+                    buffer = uploaded_file_buffers[f_name]
+                    buffer.seek(0)
+                    pivots_for_pods[f_name] = parse_edi_to_pivot(buffer)
                 all_pods = sorted(list(pd.concat([df['Port of Discharge'] for df in pivots_for_pods.values() if not df.empty]).unique()))
             except Exception as e:
                 st.error(f"Error getting PODs: {e}")
@@ -53,10 +59,11 @@ elif 'selected_files' in locals() and len(selected_files) < 2:
     st.warning("Please select at least 2 files in the sidebar to display the comparison.")
 else:
     with st.spinner("Analyzing files..."):
-        if 'pivots_for_pods' in locals() and all(f in pivots_for_pods for f in selected_files):
-            pivots_dict = {name: pivots_for_pods[name] for name in selected_files}
-        else:
-            pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files if f.name in selected_files}
+        pivots_dict = {}
+        for f_name in selected_files:
+            buffer = uploaded_file_buffers[f_name]
+            buffer.seek(0)
+            pivots_dict[f_name] = parse_edi_to_pivot(buffer)
 
         comparison_df = compare_multiple_pivots(pivots_dict)
 
