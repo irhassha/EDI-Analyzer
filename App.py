@@ -126,6 +126,9 @@ def generate_validation_tables(forecast_df, actual_df):
     detailed_table = pd.merge(fc_detail, act_detail, on=['Bay', 'Port of Discharge'], how='outer').fillna(0)
     detailed_table['Difference'] = detailed_table['Actual Count'] - detailed_table['Forecast Count']
     
+    # --- FIX: Convert columns to integer to remove decimals ---
+    detailed_table[['Forecast Count', 'Actual Count', 'Difference']] = detailed_table[['Forecast Count', 'Actual Count', 'Difference']].astype(int)
+    
     total_actual_detail = detailed_table['Actual Count'].sum()
     total_abs_diff_detail = detailed_table['Difference'].abs().sum()
     
@@ -143,6 +146,9 @@ def generate_validation_tables(forecast_df, actual_df):
     )
     summary_table = pd.merge(fc_summary, act_summary, on='Port of Discharge', how='outer').fillna(0)
     summary_table['Difference'] = summary_table['Actual Count'] - summary_table['Forecast Count']
+    
+    # --- FIX: Convert columns to integer to remove decimals ---
+    summary_table[['Forecast Count', 'Actual Count', 'Difference']] = summary_table[['Forecast Count', 'Actual Count', 'Difference']].astype(int)
 
     total_actual_summary = summary_table['Actual Count'].sum()
     total_abs_diff_summary = summary_table['Difference'].abs().sum()
@@ -383,7 +389,8 @@ else:
                     create_validation_summary_chart(stbl)
                     
                     st.subheader("Score 2: Detailed (per Bay, per POD) Accuracy")
-                    st.metric(label="Detailed Accuracy Score", value=f"{da:g}%")
+                    # --- FIX: Format metric to remove unnecessary decimals ---
+                    st.metric(label="Detailed Accuracy Score", value=f"{da:.2f}%")
                     with st.expander("Show Detailed Validation Table"):
                         st.dataframe(style_dataframe(dt), use_container_width=True)
                 else:
