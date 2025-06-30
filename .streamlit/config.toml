@@ -1,7 +1,7 @@
 [theme]
 
 # Mengubah warna latar belakang utama menjadi abu-abu muda
-backgroundColor = "#795458"
+backgroundColor = "#161A30"
 
 # Mengubah warna sidebar menjadi oranye
 secondaryBackgroundColor = "#333446"
