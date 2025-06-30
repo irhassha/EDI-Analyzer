@@ -4,10 +4,10 @@
 base = "dark"
 
 # Mengubah warna latar belakang utama menjadi abu-abu muda
-backgroundColor = "#555879"
+backgroundColor = "#E8988A"
 
 # Mengubah warna sidebar menjadi oranye
-secondaryBackgroundColor = "#DAC0A3"
+secondaryBackgroundColor = "#2A4759"
 
 # Mengubah warna teks agar tetap terbaca
 textColor = "#254D70"
