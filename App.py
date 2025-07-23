@@ -7,6 +7,42 @@ import altair as alt
 # Konfigurasi halaman
 st.set_page_config(page_title="EDI Forecaster", layout="wide")
 
+# --- Fungsi untuk memuat dan menyuntikkan CSS ---
+def load_css():
+    """ Memuat CSS kustom untuk menata gaya aplikasi Streamlit. """
+    st.markdown("""
+        <style>
+            /* Latar belakang aplikasi utama */
+            .main .block-container {
+                padding-top: 2rem;
+                padding-bottom: 2rem;
+            }
+
+            /* Kontainer seperti kartu untuk setiap kluster */
+            .stContainer[data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {
+                background-color: #262730; /* Sedikit lebih terang dari latar belakang gelap default */
+                border-radius: 10px;
+                padding: 20px;
+                margin-bottom: 20px;
+                box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+                transition: 0.3s;
+            }
+            .stContainer[data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"]:hover {
+                box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
+            }
+
+            /* Header seksi */
+            .section-header {
+                font-size: 1.5em;
+                font-weight: bold;
+                color: #fafafa;
+                border-bottom: 2px solid #3c3d44;
+                padding-bottom: 10px;
+                margin-bottom: 20px;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
 # --- Fungsi Inti ---
 
 def parse_edi_to_flat_df(uploaded_file):
@@ -184,6 +220,7 @@ def create_wc_forecast_df(flat_dfs_dict, wc_ranges):
     return merged_df.reset_index()
 
 # --- TATA LETAK APLIKASI STREAMLIT ---
+load_css()
 st.title("🚢 EDI File Comparator & Forecaster")
 st.caption("Unggah file EDI untuk membandingkan, memprediksi, dan memvalidasi muatan untuk kapal berikutnya.")
 
@@ -264,43 +301,44 @@ else:
                 
                 if not cluster_data.empty:
                     with cols[col_idx % 3]:
-                        with st.container(border=True):
-                            st.markdown(f"**Kluster: Bay {bay_range}**")
+                        st.markdown(f'<div class="card">', unsafe_allow_html=True)
+                        st.markdown(f"**Kluster: Bay {bay_range}**")
 
-                            alloc_df = cluster_data.copy()
-                            alloc_df['Container Type'] = np.where(alloc_df['Bay'] % 2 != 0, '20', '40')
-                            
-                            slot_df = alloc_df.copy()
-                            slot_df['Slot Needs'] = np.ceil(slot_df['Forecast Count'] / 30)
-                            slot_df.loc[slot_df['Container Type'] == '40', 'Slot Needs'] *= 2
-                            
-                            total_boxes = alloc_df['Forecast Count'].sum()
-                            total_slots = slot_df['Slot Needs'].sum()
-                            
-                            m_col1, m_col2 = st.columns(2)
-                            m_col1.metric("Total Prediksi Box", f"{total_boxes:,.0f}")
-                            m_col2.metric("Total Kebutuhan Slot", f"{total_slots:,.0f}")
-                            
-                            st.markdown("---")
-                            
-                            # --- Pembuatan Tabel ---
-                            for size in ['20', '40']:
-                                size_data = alloc_df[alloc_df['Container Type'] == size]
-                                if not size_data.empty and size_data['Forecast Count'].sum() > 0:
-                                    st.markdown(f"**Kontainer {size}'**")
-                                    
-                                    pivot = size_data.pivot_table(
-                                        index='Port of Discharge',
-                                        columns='Weight Class',
-                                        values='Forecast Count',
-                                        aggfunc='sum',
-                                        fill_value=0
-                                    )
-                                    # Hapus baris dan kolom yang semuanya nol
-                                    pivot = pivot.loc[(pivot != 0).any(axis=1), (pivot != 0).any(axis=0)]
-                                    
-                                    if not pivot.empty:
-                                        st.dataframe(pivot, use_container_width=True)
+                        alloc_df = cluster_data.copy()
+                        alloc_df['Container Type'] = np.where(alloc_df['Bay'] % 2 != 0, '20', '40')
+                        
+                        slot_df = alloc_df.copy()
+                        slot_df['Slot Needs'] = np.ceil(slot_df['Forecast Count'] / 30)
+                        slot_df.loc[slot_df['Container Type'] == '40', 'Slot Needs'] *= 2
+                        
+                        total_boxes = alloc_df['Forecast Count'].sum()
+                        total_slots = slot_df['Slot Needs'].sum()
+                        
+                        m_col1, m_col2 = st.columns(2)
+                        m_col1.metric("Total Prediksi Box", f"{total_boxes:,.0f}")
+                        m_col2.metric("Total Kebutuhan Slot", f"{total_slots:,.0f}")
+                        
+                        st.markdown("---")
+                        
+                        # --- Pembuatan Tabel ---
+                        for size in ['20', '40']:
+                            size_data = alloc_df[alloc_df['Container Type'] == size]
+                            if not size_data.empty and size_data['Forecast Count'].sum() > 0:
+                                st.markdown(f"**Kontainer {size}'**")
+                                
+                                pivot = size_data.pivot_table(
+                                    index='Port of Discharge',
+                                    columns='Weight Class',
+                                    values='Forecast Count',
+                                    aggfunc='sum',
+                                    fill_value=0
+                                )
+                                # Hapus baris dan kolom yang semuanya nol
+                                pivot = pivot.loc[(pivot != 0).any(axis=1), (pivot != 0).any(axis=0)]
+                                
+                                if not pivot.empty:
+                                    st.dataframe(pivot, use_container_width=True)
+                        st.markdown(f'</div>', unsafe_allow_html=True)
                 col_idx += 1
         
         st.markdown("---")
