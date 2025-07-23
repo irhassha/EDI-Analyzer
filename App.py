@@ -128,43 +128,6 @@ def add_cluster_info(df, num_clusters=6):
     df_clustered['Bay Range'] = df_clustered.groupby('Cluster ID')['Bay'].transform(lambda x: f"{x.min()}-{x.max()}")
     return df_clustered
 
-def create_summarized_cluster_table(df_with_clusters):
-    """ Creates a cluster summary table showing forecast box count. """
-    if df_with_clusters.empty or 'Forecast (Next Vessel)' not in df_with_clusters.columns: return pd.DataFrame()
-    df = df_with_clusters[df_with_clusters['Forecast (Next Vessel)'] > 0].copy()
-    if df.empty: return pd.DataFrame()
-    df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
-    df['Allocation Column'] = df['Port of Discharge'] + ' ' + df['Container Type']
-    cluster_pivot = df.pivot_table(index=['Bay Range'], columns='Allocation Column', values='Forecast (Next Vessel)', aggfunc='sum', fill_value=0)
-    cluster_pivot['_sort_key'] = cluster_pivot.index.str.split('-').str[0].astype(int)
-    cluster_pivot = cluster_pivot.sort_values(by='_sort_key').drop(columns='_sort_key')
-    cluster_pivot['Total Boxes'] = cluster_pivot.sum(axis=1)
-    cluster_pivot = cluster_pivot.reset_index().rename(columns={'Bay Range': 'BAY'})
-    cluster_pivot.insert(0, 'CLUSTER', range(1, len(cluster_pivot) + 1))
-    return cluster_pivot
-
-def create_macro_slot_table(df_with_clusters):
-    """ Creates the Macro Slot Needs table from the forecast. """
-    if df_with_clusters.empty or 'Forecast (Next Vessel)' not in df_with_clusters.columns: return pd.DataFrame()
-    df = df_with_clusters[df_with_clusters['Forecast (Next Vessel)'] > 0].copy()
-    if df.empty: return pd.DataFrame()
-    df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
-    df['Allocation Column'] = df['Port of Discharge'] + ' ' + df['Container Type']
-    cluster_pivot = df.pivot_table(index=['Bay Range'], columns='Allocation Column', values='Forecast (Next Vessel)', aggfunc='sum', fill_value=0)
-    slot_df = cluster_pivot.copy()
-    for col in slot_df.columns:
-        if ' 20' in col: slot_df[col] = np.ceil(slot_df[col] / 30)
-        elif ' 40' in col: slot_df[col] = np.ceil(slot_df[col] / 30) * 2
-    slot_df['Total Slot Needs'] = slot_df.sum(axis=1)
-    slot_df = slot_df.astype(int)
-    slot_df['_sort_key'] = slot_df.index.str.split('-').str[0].astype(int)
-    slot_df = slot_df.sort_values(by='_sort_key').drop(columns='_sort_key')
-    slot_df = slot_df.reset_index().drop(columns='Bay Range')
-    slot_df.insert(0, 'CLUSTER', range(1, len(slot_df) + 1))
-    total_col = slot_df.pop('Total Slot Needs')
-    slot_df.insert(1, 'Total Slot Needs', total_col)
-    return slot_df
-
 def create_summary_chart(comparison_df):
     """ Creates a stacked bar chart showing total container counts per source. """
     if comparison_df.empty: return
@@ -194,23 +157,22 @@ def create_colored_weight_chart(df_with_clusters):
     else:
         st.info("No forecast weight data to display in the chart.")
 
-def create_weight_class_forecast_table(flat_dfs_dict, wc_ranges):
-    """ Creates and forecasts container counts based on weight classes. """
-    def get_weight_class(weight, ranges):
-        if weight <= ranges['WC1']: return 'WC1'
-        if weight <= ranges['WC2']: return 'WC2'
-        if weight <= ranges['WC3']: return 'WC3'
-        if weight <= ranges['WC4']: return 'WC4'
-        return 'Overweight'
+def get_weight_class(weight, ranges):
+    """ Assigns a weight class based on predefined ranges. """
+    if weight <= ranges['WC1']: return 'WC1'
+    if weight <= ranges['WC2']: return 'WC2'
+    if weight <= ranges['WC3']: return 'WC3'
+    if weight <= ranges['WC4']: return 'WC4'
+    return 'Overweight'
 
+def create_wc_forecast_df(flat_dfs_dict, wc_ranges):
+    """ Creates a detailed forecast DataFrame that includes weight classes. """
     dfs_to_merge = []
     for name, df in flat_dfs_dict.items():
         if not df.empty:
-            df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
             df['Weight Class'] = df['Weight'].apply(lambda w: get_weight_class(w, wc_ranges))
-            
-            summary = df.groupby(['Port of Discharge', 'Container Type', 'Weight Class']).size().reset_index(name=f"Count ({name})")
-            dfs_to_merge.append(summary.set_index(['Port of Discharge', 'Container Type', 'Weight Class']))
+            summary = df.groupby(['Bay', 'Port of Discharge', 'Weight Class']).size().reset_index(name=f"Count ({name})")
+            dfs_to_merge.append(summary.set_index(['Bay', 'Port of Discharge', 'Weight Class']))
 
     if not dfs_to_merge: return pd.DataFrame()
 
@@ -219,14 +181,7 @@ def create_weight_class_forecast_table(flat_dfs_dict, wc_ranges):
     if count_cols:
         merged_df['Forecast Count'] = merged_df[count_cols].apply(forecast_next_value_wma, axis=1).astype(int)
     
-    # Pivot the result for better readability
-    final_table = merged_df['Forecast Count'].reset_index().pivot_table(
-        index='Port of Discharge',
-        columns=['Container Type', 'Weight Class'],
-        values='Forecast Count',
-        fill_value=0
-    )
-    return final_table
+    return merged_df.reset_index()
 
 # --- STREAMLIT APP LAYOUT ---
 st.title("🚢 EDI File Comparator & Forecaster")
@@ -266,27 +221,22 @@ elif 'selected_files' in locals() and len(selected_files) < 2:
     st.warning("Please select at least 2 historical files in the sidebar to display the comparison.")
 else:
     with st.spinner("Analyzing files..."):
-        # Use the already parsed flat dataframes if available
         if 'pivots_for_pods' in locals() and all(f in pivots_for_pods for f in selected_files):
              flat_dfs_dict = {name: pivots_for_pods[name] for name in selected_files}
         else:
              flat_dfs_dict = {f.name: parse_edi_to_flat_df(f) for f in uploaded_files if f.name in selected_files}
 
-        # Create bay-level pivots for existing analysis
         pivots_dict = {}
         for name, df in flat_dfs_dict.items():
             pivots_dict[name] = df.groupby(["Bay", "Port of Discharge"], as_index=False).agg(
                 **{'Container Count': ('Bay', 'size'), 'Total Weight': ('Weight', 'sum')}
             )
-
         comparison_df = compare_multiple_pivots(pivots_dict)
         
         if excluded_pods:
             comparison_df = comparison_df[~comparison_df['Port of Discharge'].isin(excluded_pods)]
-            # Also filter the flat dataframes
             for name in flat_dfs_dict:
                 flat_dfs_dict[name] = flat_dfs_dict[name][~flat_dfs_dict[name]['Port of Discharge'].isin(excluded_pods)]
-
 
     if comparison_df.empty:
         st.error("Could not generate a valid comparison from the selected files. Please check the files or your settings.")
@@ -295,27 +245,38 @@ else:
         create_summary_chart(comparison_df)
         st.markdown("---")
 
-        st.header("🎯 Cluster Analysis")
+        st.header("🎯 Cluster & Weight Class Analysis")
         df_with_clusters = add_cluster_info(comparison_df, num_clusters)
         
-        st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
-        cluster_table = create_summarized_cluster_table(df_with_clusters)
-        if not cluster_table.empty:
-            st.dataframe(cluster_table.set_index('CLUSTER'), use_container_width=True)
-
-        st.subheader("Macro Slot Needs")
-        macro_slot_table = create_macro_slot_table(df_with_clusters)
-        if not macro_slot_table.empty:
-            st.dataframe(macro_slot_table.set_index('CLUSTER'), use_container_width=True)
+        wc_forecast_df = create_wc_forecast_df(flat_dfs_dict, wc_ranges)
+        df_with_clusters_and_wc = add_cluster_info(wc_forecast_df, num_clusters)
         
-        st.markdown("---")
+        sorted_clusters = df_with_clusters.groupby('Cluster ID')['Bay'].min().sort_values().index
+        
+        for cluster_id in sorted_clusters:
+            cluster_data = df_with_clusters_and_wc[df_with_clusters_and_wc['Cluster ID'] == cluster_id]
+            if not cluster_data.empty:
+                bay_range = cluster_data['Bay Range'].iloc[0]
+                with st.container():
+                    st.subheader(f"Cluster: Bay {bay_range}")
+                    
+                    # Allocation Table
+                    alloc_df = cluster_data.copy()
+                    alloc_df['Container Type'] = np.where(alloc_df['Bay'] % 2 != 0, '20', '40')
+                    alloc_pivot = alloc_df.pivot_table(index='Port of Discharge', columns=['Container Type', 'Weight Class'], values='Forecast Count', aggfunc='sum', fill_value=0)
+                    if not alloc_pivot.empty:
+                        st.write("**Forecast Allocation (in Boxes)**")
+                        st.dataframe(alloc_pivot, use_container_width=True)
 
-        st.header("⚖️ Weight Class Analysis")
-        wc_table = create_weight_class_forecast_table(flat_dfs_dict, wc_ranges)
-        if not wc_table.empty:
-            st.dataframe(wc_table, use_container_width=True)
-        else:
-            st.info("No weight data available to generate the Weight Class analysis.")
+                    # Slot Needs Table
+                    slot_df = alloc_pivot.copy()
+                    for col in slot_df.columns:
+                        if '20' in col[0]: slot_df[col] = np.ceil(slot_df[col] / 30)
+                        elif '40' in col[0]: slot_df[col] = np.ceil(slot_df[col] / 30) * 2
+                    slot_df['Total Slot Needs'] = slot_df.sum(axis=1)
+                    if not slot_df.empty:
+                        st.write("**Macro Slot Needs**")
+                        st.dataframe(slot_df.astype(int), use_container_width=True)
         
         st.markdown("---")
         
