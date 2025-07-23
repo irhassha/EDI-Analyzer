@@ -227,34 +227,12 @@ def create_wc_forecast_df(flat_dfs_dict, wc_ranges):
     
     return merged_df.reset_index()
 
-def display_centered_dataframe(df, use_container_width=False):
-    """ Displays a DataFrame with all content centered using custom HTML and CSS. """
-    if df.empty:
-        return
-    
-    # Convert DataFrame to HTML, keeping the index if it's meaningful
-    html = df.to_html(index=True, escape=False)
-    
-    # Inject CSS to center align everything in the table, including the index
-    st.markdown(
-        f"""
-        <style>
-            .dataframe-container table {{
-                width: 100%;
-                text-align: center;
-                border-collapse: collapse;
-            }}
-            .dataframe-container th, .dataframe-container td, .dataframe-container .index_name {{
-                text-align: center !important;
-                padding: 8px;
-            }}
-        </style>
-        <div class="dataframe-container">
-            {html}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+def style_dataframe_center(df):
+    """ Applies center alignment to all parts of a DataFrame including the index. """
+    return df.style.set_properties(**{'text-align': 'center'}).set_table_styles([
+        {'selector': 'th.col_heading', 'props': [('text-align', 'center')]},
+        {'selector': 'th.row_heading', 'props': [('text-align', 'center')]}
+    ])
 
 # --- STREAMLIT APP LAYOUT ---
 st.title("🚢 EDI File Comparator & Forecaster")
@@ -370,14 +348,14 @@ else:
                                     pivot = pivot.loc[:, (pivot != 0).any(axis=0)]
                                     
                                     if not pivot.empty:
-                                        display_centered_dataframe(pivot)
+                                        st.dataframe(style_dataframe_center(pivot), use_container_width=True)
                 col_idx += 1
         
         st.markdown("---")
         
         with st.expander("Show Detailed Comparison & Forecast Table"):
             display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-            display_centered_dataframe(comparison_df[display_cols].set_index(comparison_df.index))
+            st.dataframe(style_dataframe_center(comparison_df[display_cols]), use_container_width=True)
             
         st.header("⚖️ Forecast Weight (VGM) Chart per Bay")
         df_with_clusters_for_chart = add_cluster_info(comparison_df, num_clusters)
