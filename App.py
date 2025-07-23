@@ -4,15 +4,15 @@ import numpy as np
 import io
 import altair as alt
 
-# Page configuration
+# Konfigurasi halaman
 st.set_page_config(page_title="EDI Forecaster", layout="wide")
 
-# --- CORE FUNCTIONS ---
+# --- Fungsi Inti ---
 
 def parse_edi_to_flat_df(uploaded_file):
     """
-    This function takes an uploaded EDI file, parses it,
-    and returns a flat DataFrame with one row per container.
+    Fungsi ini mengambil file EDI yang diunggah, mem-parsingnya,
+    dan mengembalikannya sebagai DataFrame datar dengan satu baris per kontainer.
     """
     try:
         uploaded_file.seek(0)
@@ -61,7 +61,7 @@ def parse_edi_to_flat_df(uploaded_file):
 
     df_all = pd.DataFrame(all_records)
     if "Port of Loading" not in df_all.columns:
-        st.error("Could not find 'Port of Loading' information in the EDI file.")
+        st.error("Tidak dapat menemukan informasi 'Port of Loading' di file EDI.")
         return pd.DataFrame()
     df_filtered = df_all.loc[df_all["Port of Loading"] == "IDJKT"].copy()
     if df_filtered.empty: return pd.DataFrame()
@@ -75,7 +75,7 @@ def parse_edi_to_flat_df(uploaded_file):
     return df_display
 
 def forecast_next_value_wma(series):
-    """ Forecasts the next value using a Weighted Moving Average (WMA). """
+    """ Memprediksi nilai berikutnya menggunakan Weighted Moving Average (WMA). """
     if len(series.dropna()) < 2:
         return round(series.mean()) if not series.empty else 0
     y = series.values
@@ -87,7 +87,7 @@ def forecast_next_value_wma(series):
     return max(0, round(weighted_avg))
 
 def compare_multiple_pivots(pivots_dict_selected):
-    """ Compares multiple pivot DataFrames and returns a combined DataFrame with forecasts. """
+    """ Membandingkan beberapa DataFrame pivot dan mengembalikan DataFrame gabungan dengan prediksi. """
     if not pivots_dict_selected or len(pivots_dict_selected) < 2: return pd.DataFrame()
     dfs_to_merge = []
     for name, df in pivots_dict_selected.items():
@@ -109,7 +109,7 @@ def compare_multiple_pivots(pivots_dict_selected):
     return merged_df.reset_index().sort_values(by="Bay").reset_index(drop=True)
 
 def create_summary_table(comparison_df):
-    """ Creates a summary table from the main comparison dataframe. """
+    """ Membuat tabel ringkasan dari dataframe perbandingan utama. """
     if comparison_df.empty: return pd.DataFrame()
     summary_cols = [col for col in comparison_df.columns if col.startswith('Count') or 'Forecast (Next Vessel)' in col]
     grouping_cols = ['Port of Discharge'] + summary_cols
@@ -117,7 +117,7 @@ def create_summary_table(comparison_df):
     return summary
 
 def add_cluster_info(df, num_clusters=6):
-    """ Adds cluster information to a DataFrame. """
+    """ Menambahkan informasi kluster ke DataFrame. """
     if df.empty or 'Bay' not in df.columns or df['Bay'].nunique() < num_clusters:
         return df.assign(**{'Cluster ID': 0, 'Bay Range': 'N/A'})
     df_clustered = df.copy()
@@ -128,52 +128,8 @@ def add_cluster_info(df, num_clusters=6):
     df_clustered['Bay Range'] = df_clustered.groupby('Cluster ID')['Bay'].transform(lambda x: f"{x.min()}-{x.max()}")
     return df_clustered
 
-def create_summarized_cluster_table(df_with_clusters):
-    """ Creates a cluster summary table showing forecast box count. """
-    if df_with_clusters.empty or 'Forecast (Next Vessel)' not in df_with_clusters.columns: return pd.DataFrame()
-    df = df_with_clusters[df_with_clusters['Forecast (Next Vessel)'] > 0].copy()
-    if df.empty: return pd.DataFrame()
-    df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
-    df['Allocation Column'] = df['Port of Discharge'] + ' ' + df['Container Type']
-    cluster_pivot = df.pivot_table(index=['Bay Range'], columns='Allocation Column', values='Forecast (Next Vessel)', aggfunc='sum', fill_value=0)
-    
-    cluster_pivot['_sort_key'] = cluster_pivot.index.str.split('-').str[0].astype(int)
-    cluster_pivot = cluster_pivot.sort_values(by='_sort_key').drop(columns='_sort_key')
-    
-    cluster_pivot['Total Boxes'] = cluster_pivot.sum(axis=1)
-    
-    cluster_pivot = cluster_pivot.reset_index().rename(columns={'Bay Range': 'BAY'})
-    cluster_pivot.insert(0, 'CLUSTER', range(1, len(cluster_pivot) + 1))
-    return cluster_pivot
-
-def create_macro_slot_table(df_with_clusters):
-    """ Creates the Macro Slot Needs table from the forecast. """
-    if df_with_clusters.empty or 'Forecast (Next Vessel)' not in df_with_clusters.columns: return pd.DataFrame()
-    df = df_with_clusters[df_with_clusters['Forecast (Next Vessel)'] > 0].copy()
-    if df.empty: return pd.DataFrame()
-    df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
-    df['Allocation Column'] = df['Port of Discharge'] + ' ' + df['Container Type']
-    cluster_pivot = df.pivot_table(index=['Bay Range'], columns='Allocation Column', values='Forecast (Next Vessel)', aggfunc='sum', fill_value=0)
-    slot_df = cluster_pivot.copy()
-    for col in slot_df.columns:
-        if ' 20' in col: slot_df[col] = np.ceil(slot_df[col] / 30)
-        elif ' 40' in col: slot_df[col] = np.ceil(slot_df[col] / 30) * 2
-    slot_df['Total Slot Needs'] = slot_df.sum(axis=1)
-    slot_df = slot_df.astype(int)
-    
-    slot_df['_sort_key'] = slot_df.index.str.split('-').str[0].astype(int)
-    slot_df = slot_df.sort_values(by='_sort_key').drop(columns='_sort_key')
-    
-    slot_df = slot_df.reset_index().drop(columns='Bay Range')
-    slot_df.insert(0, 'CLUSTER', range(1, len(slot_df) + 1))
-    
-    total_col = slot_df.pop('Total Slot Needs')
-    slot_df.insert(1, 'Total Slot Needs', total_col)
-    
-    return slot_df
-
 def create_summary_chart(comparison_df):
-    """ Creates a stacked bar chart showing total container counts per source. """
+    """ Membuat grafik batang bertumpuk yang menampilkan jumlah total kontainer per sumber. """
     if comparison_df.empty: return
     summary_cols = [col for col in comparison_df.columns if col.startswith('Count') or 'Forecast (Next Vessel)' in col]
     grouping_cols = ['Port of Discharge'] + summary_cols
@@ -181,7 +137,7 @@ def create_summary_chart(comparison_df):
     try:
         melted_df = pd.melt(summary_df, id_vars=['Port of Discharge'], var_name='Source', value_name='Container Count')
     except KeyError:
-        st.warning("Could not generate summary chart due to missing data.")
+        st.warning("Tidak dapat membuat grafik ringkasan karena data tidak ada.")
         return
     melted_df['Source Label'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
     totals_df = melted_df.groupby('Source Label')['Container Count'].sum().reset_index(name='Total Count')
@@ -191,7 +147,7 @@ def create_summary_chart(comparison_df):
     st.altair_chart(chart, use_container_width=True)
 
 def create_colored_weight_chart(df_with_clusters):
-    """ Creates a colored bar chart for the total forecast weight per Bay. """
+    """ Membuat grafik batang berwarna untuk total prediksi berat per Bay. """
     if df_with_clusters.empty or 'Forecast Weight (KGM)' not in df_with_clusters.columns or 'Bay Range' not in df_with_clusters.columns: return
     weight_summary = df_with_clusters.groupby(['Bay', 'Bay Range'])['Forecast Weight (KGM)'].sum().reset_index()
     weight_summary = weight_summary[weight_summary['Forecast Weight (KGM)'] > 0]
@@ -199,52 +155,19 @@ def create_colored_weight_chart(df_with_clusters):
         chart = alt.Chart(weight_summary).mark_bar().encode(x=alt.X('Bay:O', sort=None, title='Bay'), y=alt.Y('Forecast Weight (KGM):Q', title='Forecast Weight (KGM)'), color=alt.Color('Bay Range:N', title='Cluster'), tooltip=['Bay', 'Forecast Weight (KGM)', 'Bay Range']).properties(title='Forecast Weight (VGM) per Bay by Cluster')
         st.altair_chart(chart, use_container_width=True)
     else:
-        st.info("No forecast weight data to display in the chart.")
+        st.info("Tidak ada data prediksi berat untuk ditampilkan di grafik.")
 
-def get_weight_class(weight, ranges):
-    """ Assigns a weight class based on predefined ranges. """
-    if weight <= ranges['WC1']: return 'WC1'
-    if weight <= ranges['WC2']: return 'WC2'
-    if weight <= ranges['WC3']: return 'WC3'
-    if weight <= ranges['WC4']: return 'WC4'
-    return 'Overweight'
-
-def create_wc_forecast_df(flat_dfs_dict, wc_ranges):
-    """ Creates a detailed forecast DataFrame that includes weight classes. """
-    dfs_to_merge = []
-    for name, df in flat_dfs_dict.items():
-        if not df.empty:
-            df['Weight Class'] = df['Weight'].apply(lambda w: get_weight_class(w, wc_ranges))
-            summary = df.groupby(['Bay', 'Port of Discharge', 'Weight Class']).size().reset_index(name=f"Count ({name})")
-            dfs_to_merge.append(summary.set_index(['Bay', 'Port of Discharge', 'Weight Class']))
-
-    if not dfs_to_merge: return pd.DataFrame()
-
-    merged_df = pd.concat(dfs_to_merge, axis=1, join='outer').fillna(0).astype(int)
-    count_cols = [col for col in merged_df.columns if col.startswith('Count')]
-    if count_cols:
-        merged_df['Forecast Count'] = merged_df[count_cols].apply(forecast_next_value_wma, axis=1).astype(int)
-    
-    return merged_df.reset_index()
-
-def style_dataframe_center(df):
-    """ Applies center alignment to all parts of a DataFrame including the index. """
-    return df.style.set_properties(**{'text-align': 'center'}).set_table_styles([
-        {'selector': 'th.col_heading', 'props': [('text-align', 'center')]},
-        {'selector': 'th.row_heading', 'props': [('text-align', 'center')]}
-    ])
-
-# --- STREAMLIT APP LAYOUT ---
+# --- TATA LETAK APLIKASI STREAMLIT ---
 st.title("🚢 EDI File Comparator & Forecaster")
-st.caption("Upload EDI files to compare, forecast, and validate the load for the next vessel.")
+st.caption("Unggah file EDI untuk membandingkan, memprediksi, dan memvalidasi muatan untuk kapal berikutnya.")
 
 with st.sidebar:
-    st.header("⚙️ Analysis Settings")
-    uploaded_files = st.file_uploader("1. Upload historical EDI files", type=["edi", "txt"], accept_multiple_files=True)
+    st.header("⚙️ Pengaturan Analisis")
+    uploaded_files = st.file_uploader("1. Unggah file EDI historis", type=["edi", "txt"], accept_multiple_files=True)
     
     if uploaded_files:
         file_names = list(p.name for p in uploaded_files)
-        selected_files = st.multiselect("2. Select files (in order):", options=file_names, default=file_names)
+        selected_files = st.multiselect("2. Pilih file (secara berurutan):", options=file_names, default=file_names)
         
         all_pods = []
         if selected_files:
@@ -252,26 +175,19 @@ with st.sidebar:
                 pivots_for_pods = {f.name: parse_edi_to_flat_df(f) for f in uploaded_files if f.name in selected_files}
                 all_pods = sorted(list(pd.concat([df['Port of Discharge'] for df in pivots_for_pods.values() if not df.empty]).unique()))
             except Exception as e:
-                st.error(f"Error getting PODs: {e}")
+                st.error(f"Error saat mengambil POD: {e}")
         
-        excluded_pods = st.multiselect("3. Exclude Ports of Discharge (optional):", options=all_pods)
+        excluded_pods = st.multiselect("3. Keluarkan Port of Discharge (opsional):", options=all_pods)
         
-        with st.expander("Weight Class Settings"):
-            wc1 = st.number_input("WC1 Upper Limit (KGM)", value=9900)
-            wc2 = st.number_input("WC2 Upper Limit (KGM)", value=15900)
-            wc3 = st.number_input("WC3 Upper Limit (KGM)", value=21900)
-            wc4 = st.number_input("WC4 Upper Limit (KGM)", value=30400)
-            wc_ranges = {'WC1': wc1, 'WC2': wc2, 'WC3': wc3, 'WC4': wc4}
-        
-        num_clusters = st.number_input("5. Select number of clusters:", min_value=2, max_value=20, value=6, step=1, help="This will group the Bays into the selected number of ranges for analysis.")
+        num_clusters = st.number_input("4. Pilih jumlah kluster:", min_value=2, max_value=20, value=6, step=1, help="Ini akan mengelompokkan Bay ke dalam jumlah rentang yang dipilih untuk analisis.")
 
 
 if not uploaded_files or len(uploaded_files) < 2:
-    st.info("ℹ️ Please upload at least 2 historical files in the sidebar to start the analysis.")
+    st.info("ℹ️ Silakan unggah minimal 2 file historis di sidebar untuk memulai analisis.")
 elif 'selected_files' in locals() and len(selected_files) < 2:
-    st.warning("Please select at least 2 historical files in the sidebar to display the comparison.")
+    st.warning("Silakan pilih minimal 2 file historis di sidebar untuk menampilkan perbandingan.")
 else:
-    with st.spinner("Analyzing files..."):
+    with st.spinner("Menganalisis file..."):
         if 'pivots_for_pods' in locals() and all(f in pivots_for_pods for f in selected_files):
              flat_dfs_dict = {name: pivots_for_pods[name] for name in selected_files}
         else:
@@ -286,22 +202,20 @@ else:
         
         if excluded_pods:
             comparison_df = comparison_df[~comparison_df['Port of Discharge'].isin(excluded_pods)]
-            for name in flat_dfs_dict:
-                flat_dfs_dict[name] = flat_dfs_dict[name][~flat_dfs_dict[name]['Port of Discharge'].isin(excluded_pods)]
 
     if comparison_df.empty:
-        st.error("Could not generate a valid comparison from the selected files. Please check the files or your settings.")
+        st.error("Tidak dapat membuat perbandingan yang valid dari file yang dipilih. Silakan periksa file atau pengaturan Anda.")
     else:
-        st.header("📊 Summary per Vessel")
+        st.header("📊 Ringkasan per Kapal")
         create_summary_chart(comparison_df)
         st.markdown("---")
 
-        st.header("🎯 Cluster & Weight Class Analysis")
-        wc_forecast_df = create_wc_forecast_df(flat_dfs_dict, wc_ranges)
-        df_with_clusters_and_wc = add_cluster_info(wc_forecast_df, num_clusters)
+        st.header("🎯 Analisis Kluster")
+        df_with_clusters = add_cluster_info(comparison_df, num_clusters)
         
-        sorted_clusters = df_with_clusters_and_wc.drop_duplicates(subset=['Cluster ID', 'Bay Range']).sort_values(by='Cluster ID')
+        sorted_clusters = df_with_clusters.drop_duplicates(subset=['Cluster ID', 'Bay Range']).sort_values(by='Cluster ID')
         
+        # Buat kolom untuk tata letak kartu
         num_total_clusters = len(sorted_clusters)
         if num_total_clusters > 0:
             cols = st.columns(min(num_total_clusters, 3))
@@ -310,53 +224,49 @@ else:
                 cluster_id = cluster_info['Cluster ID']
                 bay_range = cluster_info['Bay Range']
                 
-                cluster_data = df_with_clusters_and_wc[df_with_clusters_and_wc['Cluster ID'] == cluster_id]
+                cluster_data = df_with_clusters[df_with_clusters['Cluster ID'] == cluster_id]
                 
                 if not cluster_data.empty:
                     with cols[col_idx % 3]:
                         with st.container(border=True):
-                            st.markdown(f"**Cluster: Bay {bay_range}**")
+                            st.markdown(f"**Kluster: Bay {bay_range}**")
 
+                            # --- Perhitungan Baru & Benar ---
                             alloc_df = cluster_data.copy()
                             alloc_df['Container Type'] = np.where(alloc_df['Bay'] % 2 != 0, '20', '40')
                             
-                            slot_df = alloc_df.copy()
-                            slot_df['Slot Needs'] = np.ceil(slot_df['Forecast Count'] / 30)
-                            slot_df.loc[slot_df['Container Type'] == '40', 'Slot Needs'] *= 2
+                            total_boxes = alloc_df['Forecast (Next Vessel)'].sum()
                             
-                            total_boxes = alloc_df['Forecast Count'].sum()
-                            total_slots = slot_df['Slot Needs'].sum()
+                            total_boxes_20ft = alloc_df[alloc_df['Container Type'] == '20']['Forecast (Next Vessel)'].sum()
+                            total_boxes_40ft = alloc_df[alloc_df['Container Type'] == '40']['Forecast (Next Vessel)'].sum()
+                            
+                            slots_20ft = np.ceil(total_boxes_20ft / 30)
+                            slots_40ft = np.ceil(total_boxes_40ft / 30) * 2
+                            total_slots = slots_20ft + slots_40ft
                             
                             m_col1, m_col2 = st.columns(2)
-                            m_col1.metric("Total Forecast Boxes", f"{total_boxes:,.0f}")
-                            m_col2.metric("Total Slot Needs", f"{total_slots:,.0f}")
+                            m_col1.metric("Total Prediksi Box", f"{total_boxes:,.0f}")
+                            m_col2.metric("Total Kebutuhan Slot", f"{total_slots:,.0f}")
                             
                             st.markdown("---")
                             
+                            # --- Pembuatan Tabel Sederhana ---
                             for size in ['20', '40']:
                                 size_data = alloc_df[alloc_df['Container Type'] == size]
-                                if not size_data.empty and size_data['Forecast Count'].sum() > 0:
-                                    st.markdown(f"**{size}' Containers**")
+                                if not size_data.empty and size_data['Forecast (Next Vessel)'].sum() > 0:
+                                    st.markdown(f"**Kontainer {size}'**")
                                     
-                                    pivot = size_data.pivot_table(
-                                        index='Port of Discharge',
-                                        columns='Weight Class',
-                                        values='Forecast Count',
-                                        aggfunc='sum',
-                                        fill_value=0
-                                    )
-                                    pivot = pivot.loc[:, (pivot != 0).any(axis=0)]
+                                    pivot = size_data.groupby('Port of Discharge')['Forecast (Next Vessel)'].sum().reset_index()
+                                    pivot.rename(columns={'Forecast (Next Vessel)': 'Jumlah Box'}, inplace=True)
                                     
-                                    if not pivot.empty:
-                                        st.dataframe(style_dataframe_center(pivot), use_container_width=True)
+                                    st.dataframe(pivot, use_container_width=True, hide_index=True)
                 col_idx += 1
         
         st.markdown("---")
         
-        with st.expander("Show Detailed Comparison & Forecast Table"):
+        with st.expander("Tampilkan Tabel Perbandingan & Prediksi Detail"):
             display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-            st.dataframe(style_dataframe_center(comparison_df[display_cols]), use_container_width=True)
+            st.dataframe(comparison_df[display_cols], use_container_width=True)
             
-        st.header("⚖️ Forecast Weight (VGM) Chart per Bay")
-        df_with_clusters_for_chart = add_cluster_info(comparison_df, num_clusters)
-        create_colored_weight_chart(df_with_clusters_for_chart)
+        st.header("⚖️ Grafik Prediksi Berat (VGM) per Bay")
+        create_colored_weight_chart(df_with_clusters)
