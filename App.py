@@ -253,39 +253,50 @@ else:
         
         # Create columns for the card layout
         num_total_clusters = len(sorted_clusters)
-        cols = st.columns(min(num_total_clusters, 3))
-        
-        col_idx = 0
-        for _, cluster_info in sorted_clusters.iterrows():
-            cluster_id = cluster_info['Cluster ID']
-            bay_range = cluster_info['Bay Range']
-            
-            cluster_data = df_with_clusters_and_wc[df_with_clusters_and_wc['Cluster ID'] == cluster_id]
-            
-            if not cluster_data.empty:
-                with cols[col_idx % 3]:
-                    with st.container(border=True):
-                        st.markdown(f"**Cluster: Bay {bay_range}**")
+        if num_total_clusters > 0:
+            cols = st.columns(min(num_total_clusters, 3))
+            col_idx = 0
+            for _, cluster_info in sorted_clusters.iterrows():
+                cluster_id = cluster_info['Cluster ID']
+                bay_range = cluster_info['Bay Range']
+                
+                cluster_data = df_with_clusters_and_wc[df_with_clusters_and_wc['Cluster ID'] == cluster_id]
+                
+                if not cluster_data.empty:
+                    with cols[col_idx % 3]:
+                        with st.container(border=True):
+                            st.markdown(f"**Cluster: Bay {bay_range}**")
 
-                        # --- Allocation Table ---
-                        alloc_df = cluster_data.copy()
-                        alloc_df['Container Type'] = np.where(alloc_df['Bay'] % 2 != 0, '20', '40')
-                        alloc_pivot = alloc_df.pivot_table(index='Port of Discharge', columns=['Container Type', 'Weight Class'], values='Forecast Count', aggfunc='sum', fill_value=0)
-                        if not alloc_pivot.empty:
-                            st.write("**Forecast Allocation (Boxes)**")
-                            st.dataframe(alloc_pivot, use_container_width=True)
-
-                        # --- Slot Needs Table ---
-                        slot_df = alloc_pivot.copy()
-                        for col in slot_df.columns:
-                            # Multi-level columns are tuples, e.g., ('20', 'WC1')
-                            if '20' in col[0]: slot_df[col] = np.ceil(slot_df[col] / 30)
-                            elif '40' in col[0]: slot_df[col] = np.ceil(slot_df[col] / 30) * 2
-                        slot_df['Total Slot Needs'] = slot_df.sum(axis=1)
-                        if not slot_df.empty:
-                            st.write("**Macro Slot Needs**")
-                            st.dataframe(slot_df.astype(int), use_container_width=True)
-            col_idx += 1
+                            # --- Allocation Narrative ---
+                            alloc_df = cluster_data.copy()
+                            alloc_df['Container Type'] = np.where(alloc_df['Bay'] % 2 != 0, '20', '40')
+                            
+                            # --- Slot Needs Calculation ---
+                            slot_df = alloc_df.copy()
+                            slot_df['Slot Needs'] = np.ceil(slot_df['Forecast Count'] / 30)
+                            slot_df.loc[slot_df['Container Type'] == '40', 'Slot Needs'] *= 2
+                            
+                            # --- Display Metrics ---
+                            total_boxes = alloc_df['Forecast Count'].sum()
+                            total_slots = slot_df['Slot Needs'].sum()
+                            
+                            m_col1, m_col2 = st.columns(2)
+                            m_col1.metric("Total Forecast Boxes", f"{total_boxes:,.0f}")
+                            m_col2.metric("Total Slot Needs", f"{total_slots:,.0f}")
+                            
+                            st.markdown("---")
+                            
+                            # --- Narrative Generation ---
+                            for size in ['20', '40']:
+                                size_data = alloc_df[alloc_df['Container Type'] == size]
+                                if not size_data.empty:
+                                    st.markdown(f"**{size}' Containers**")
+                                    narrative = ""
+                                    for _, row in size_data.iterrows():
+                                        if row['Forecast Count'] > 0:
+                                            narrative += f"- **{row['Port of Discharge']} {row['Weight Class']}:** {row['Forecast Count']} boxes\n"
+                                    st.markdown(narrative)
+                col_idx += 1
         
         st.markdown("---")
         
