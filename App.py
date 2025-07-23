@@ -267,16 +267,13 @@ else:
                         with st.container(border=True):
                             st.markdown(f"**Cluster: Bay {bay_range}**")
 
-                            # --- Allocation Narrative ---
                             alloc_df = cluster_data.copy()
                             alloc_df['Container Type'] = np.where(alloc_df['Bay'] % 2 != 0, '20', '40')
                             
-                            # --- Slot Needs Calculation ---
                             slot_df = alloc_df.copy()
                             slot_df['Slot Needs'] = np.ceil(slot_df['Forecast Count'] / 30)
                             slot_df.loc[slot_df['Container Type'] == '40', 'Slot Needs'] *= 2
                             
-                            # --- Display Metrics ---
                             total_boxes = alloc_df['Forecast Count'].sum()
                             total_slots = slot_df['Slot Needs'].sum()
                             
@@ -286,16 +283,22 @@ else:
                             
                             st.markdown("---")
                             
-                            # --- Narrative Generation ---
+                            # --- Table Generation ---
                             for size in ['20', '40']:
                                 size_data = alloc_df[alloc_df['Container Type'] == size]
-                                if not size_data.empty:
+                                if not size_data.empty and size_data['Forecast Count'].sum() > 0:
                                     st.markdown(f"**{size}' Containers**")
-                                    narrative = ""
-                                    for _, row in size_data.iterrows():
-                                        if row['Forecast Count'] > 0:
-                                            narrative += f"- **{row['Port of Discharge']} {row['Weight Class']}:** {row['Forecast Count']} boxes\n"
-                                    st.markdown(narrative)
+                                    
+                                    pivot = size_data.pivot_table(
+                                        index='Port of Discharge',
+                                        columns='Weight Class',
+                                        values='Forecast Count',
+                                        aggfunc='sum',
+                                        fill_value=0
+                                    )
+                                    # Remove columns that are all zero
+                                    pivot = pivot.loc[:, (pivot != 0).any(axis=0)]
+                                    st.dataframe(pivot, use_container_width=True)
                 col_idx += 1
         
         st.markdown("---")
