@@ -9,10 +9,10 @@ st.set_page_config(page_title="EDI Forecaster", layout="wide")
 
 # --- CORE FUNCTIONS ---
 
-def parse_edi_to_pivot(uploaded_file):
+def parse_edi_to_flat_df(uploaded_file):
     """
     This function takes an uploaded EDI file, parses it,
-    and returns it as a pivot DataFrame.
+    and returns a flat DataFrame with one row per container.
     """
     try:
         uploaded_file.seek(0)
@@ -65,17 +65,14 @@ def parse_edi_to_pivot(uploaded_file):
         return pd.DataFrame()
     df_filtered = df_all.loc[df_all["Port of Loading"] == "IDJKT"].copy()
     if df_filtered.empty: return pd.DataFrame()
+    
     df_display = df_filtered.drop(columns=["Port of Loading"]).dropna(subset=["Port of Discharge", "Bay"])
     df_display['Weight'] = df_display['Weight'].fillna(0)
-    if df_display.empty: return pd.DataFrame()
-
-    pivot_df = df_display.groupby(["Bay", "Port of Discharge"], as_index=False).agg(
-        **{'Container Count': ('Bay', 'size'), 'Total Weight': ('Weight', 'sum')}
-    )
-    pivot_df['Bay'] = pd.to_numeric(pivot_df['Bay'], errors='coerce')
-    pivot_df.dropna(subset=['Bay'], inplace=True)
-    pivot_df['Bay'] = pivot_df['Bay'].astype(int)
-    return pivot_df
+    df_display['Bay'] = pd.to_numeric(df_display['Bay'], errors='coerce')
+    df_display.dropna(subset=['Bay'], inplace=True)
+    df_display['Bay'] = df_display['Bay'].astype(int)
+    
+    return df_display
 
 def forecast_next_value_wma(series):
     """ Forecasts the next value using a Weighted Moving Average (WMA). """
@@ -111,55 +108,13 @@ def compare_multiple_pivots(pivots_dict_selected):
         merged_df['Forecast Weight (KGM)'] = merged_df[weight_cols].apply(forecast_next_value_wma, axis=1).astype(int)
     return merged_df.reset_index().sort_values(by="Bay").reset_index(drop=True)
 
-def generate_validation_tables(forecast_df, actual_df):
-    """ Compares forecast to actual data at both summary and detailed levels. """
-    if forecast_df.empty or actual_df.empty:
-        return pd.DataFrame(), 0, pd.DataFrame(), 0
-
-    # 1. Detailed (per Bay) Comparison
-    fc_detail = forecast_df[['Bay', 'Port of Discharge', 'Forecast (Next Vessel)']].rename(
-        columns={'Forecast (Next Vessel)': 'Forecast Count'}
-    )
-    act_detail = actual_df.groupby(['Bay', 'Port of Discharge'])['Container Count'].sum().reset_index().rename(
-        columns={'Container Count': 'Actual Count'}
-    )
-    detailed_table = pd.merge(fc_detail, act_detail, on=['Bay', 'Port of Discharge'], how='outer').fillna(0)
-    detailed_table['Difference'] = detailed_table['Actual Count'] - detailed_table['Forecast Count']
-    
-    # --- FIX: Convert columns to integer to remove decimals ---
-    detailed_table[['Forecast Count', 'Actual Count', 'Difference']] = detailed_table[['Forecast Count', 'Actual Count', 'Difference']].astype(int)
-    
-    total_actual_detail = detailed_table['Actual Count'].sum()
-    total_abs_diff_detail = detailed_table['Difference'].abs().sum()
-    
-    if total_actual_detail == 0:
-        detailed_accuracy = 0
-    else:
-        detailed_accuracy = max(0, (1 - (total_abs_diff_detail / total_actual_detail)) * 100)
-
-    # 2. Summary (per POD) Comparison
-    fc_summary = forecast_df.groupby('Port of Discharge')['Forecast (Next Vessel)'].sum().reset_index().rename(
-        columns={'Forecast (Next Vessel)': 'Forecast Count'}
-    )
-    act_summary = actual_df.groupby('Port of Discharge')['Container Count'].sum().reset_index().rename(
-        columns={'Container Count': 'Actual Count'}
-    )
-    summary_table = pd.merge(fc_summary, act_summary, on='Port of Discharge', how='outer').fillna(0)
-    summary_table['Difference'] = summary_table['Actual Count'] - summary_table['Forecast Count']
-    
-    # --- FIX: Convert columns to integer to remove decimals ---
-    summary_table[['Forecast Count', 'Actual Count', 'Difference']] = summary_table[['Forecast Count', 'Actual Count', 'Difference']].astype(int)
-
-    total_actual_summary = summary_table['Actual Count'].sum()
-    total_abs_diff_summary = summary_table['Difference'].abs().sum()
-
-    if total_actual_summary == 0:
-        summary_accuracy = 0
-    else:
-        summary_accuracy = max(0, (1 - (total_abs_diff_summary / total_actual_summary)) * 100)
-        
-    return detailed_table, detailed_accuracy, summary_table, summary_accuracy
-
+def create_summary_table(comparison_df):
+    """ Creates a summary table from the main comparison dataframe. """
+    if comparison_df.empty: return pd.DataFrame()
+    summary_cols = [col for col in comparison_df.columns if col.startswith('Count') or 'Forecast (Next Vessel)' in col]
+    grouping_cols = ['Port of Discharge'] + summary_cols
+    summary = comparison_df[grouping_cols].groupby('Port of Discharge').sum().reset_index()
+    return summary
 
 def add_cluster_info(df, num_clusters=6):
     """ Adds cluster information to a DataFrame. """
@@ -181,12 +136,9 @@ def create_summarized_cluster_table(df_with_clusters):
     df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
     df['Allocation Column'] = df['Port of Discharge'] + ' ' + df['Container Type']
     cluster_pivot = df.pivot_table(index=['Bay Range'], columns='Allocation Column', values='Forecast (Next Vessel)', aggfunc='sum', fill_value=0)
-    
     cluster_pivot['_sort_key'] = cluster_pivot.index.str.split('-').str[0].astype(int)
     cluster_pivot = cluster_pivot.sort_values(by='_sort_key').drop(columns='_sort_key')
-    
     cluster_pivot['Total Boxes'] = cluster_pivot.sum(axis=1)
-    
     cluster_pivot = cluster_pivot.reset_index().rename(columns={'Bay Range': 'BAY'})
     cluster_pivot.insert(0, 'CLUSTER', range(1, len(cluster_pivot) + 1))
     return cluster_pivot
@@ -205,98 +157,78 @@ def create_macro_slot_table(df_with_clusters):
         elif ' 40' in col: slot_df[col] = np.ceil(slot_df[col] / 30) * 2
     slot_df['Total Slot Needs'] = slot_df.sum(axis=1)
     slot_df = slot_df.astype(int)
-    
     slot_df['_sort_key'] = slot_df.index.str.split('-').str[0].astype(int)
     slot_df = slot_df.sort_values(by='_sort_key').drop(columns='_sort_key')
-    
     slot_df = slot_df.reset_index().drop(columns='Bay Range')
     slot_df.insert(0, 'CLUSTER', range(1, len(slot_df) + 1))
-    
     total_col = slot_df.pop('Total Slot Needs')
     slot_df.insert(1, 'Total Slot Needs', total_col)
-    
     return slot_df
 
 def create_summary_chart(comparison_df):
     """ Creates a stacked bar chart showing total container counts per source. """
     if comparison_df.empty: return
-    
     summary_cols = [col for col in comparison_df.columns if col.startswith('Count') or 'Forecast (Next Vessel)' in col]
     grouping_cols = ['Port of Discharge'] + summary_cols
     summary_df = comparison_df[grouping_cols].groupby('Port of Discharge').sum().reset_index()
-
     try:
         melted_df = pd.melt(summary_df, id_vars=['Port of Discharge'], var_name='Source', value_name='Container Count')
     except KeyError:
         st.warning("Could not generate summary chart due to missing data.")
         return
-
     melted_df['Source Label'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
     totals_df = melted_df.groupby('Source Label')['Container Count'].sum().reset_index(name='Total Count')
-
-    bars = alt.Chart(melted_df).mark_bar().encode(
-        x=alt.X('Source Label:N', sort=None, title='Data Source (Vessel/Forecast)', axis=alt.Axis(labelAngle=0, labelLimit=200)),
-        y=alt.Y('sum(Container Count):Q', title='Total Container Count'),
-        color=alt.Color('Port of Discharge:N', title='Port of Discharge'),
-        tooltip=['Source Label', 'Port of Discharge', 'Container Count']
-    )
-    text = alt.Chart(totals_df).mark_text(align='center', baseline='bottom', dy=-10, color='white').encode(
-        x=alt.X('Source Label:N', sort=None),
-        y=alt.Y('Total Count:Q'),
-        text=alt.Text('Total Count:Q', format=',')
-    )
+    bars = alt.Chart(melted_df).mark_bar().encode(x=alt.X('Source Label:N', sort=None, title='Data Source (Vessel/Forecast)', axis=alt.Axis(labelAngle=0, labelLimit=200)), y=alt.Y('sum(Container Count):Q', title='Total Container Count'), color=alt.Color('Port of Discharge:N', title='Port of Discharge'), tooltip=['Source Label', 'Port of Discharge', 'Container Count'])
+    text = alt.Chart(totals_df).mark_text(align='center', baseline='bottom', dy=-10, color='white').encode(x=alt.X('Source Label:N', sort=None), y=alt.Y('Total Count:Q'), text=alt.Text('Total Count:Q', format=','))
     chart = (bars + text).properties(title='Container Composition per Vessel and Forecast')
     st.altair_chart(chart, use_container_width=True)
 
-def create_validation_summary_chart(summary_validation_table):
-    """ Creates a grouped bar chart for forecast vs actual summary data. """
-    if summary_validation_table.empty:
-        return
-
-    melted_df = pd.melt(
-        summary_validation_table,
-        id_vars=['Port of Discharge'],
-        value_vars=['Forecast Count', 'Actual Count'],
-        var_name='Type',
-        value_name='Count'
-    )
-    
-    chart = alt.Chart(melted_df).mark_bar().encode(
-        x=alt.X('Port of Discharge:N', sort='-y', title='Port of Discharge'),
-        y=alt.Y('Count:Q', title='Container Count'),
-        color=alt.Color('Type:N', title='Type'),
-        xOffset='Type:N'
-    ).properties(
-        title='Forecast vs. Actual Count per Port of Discharge'
-    )
-    st.altair_chart(chart, use_container_width=True)
-
-
 def create_colored_weight_chart(df_with_clusters):
     """ Creates a colored bar chart for the total forecast weight per Bay. """
-    if df_with_clusters.empty or 'Forecast Weight (KGM)' not in df_with_clusters.columns or 'Bay Range' not in df_with_clusters.columns:
-        return
+    if df_with_clusters.empty or 'Forecast Weight (KGM)' not in df_with_clusters.columns or 'Bay Range' not in df_with_clusters.columns: return
     weight_summary = df_with_clusters.groupby(['Bay', 'Bay Range'])['Forecast Weight (KGM)'].sum().reset_index()
     weight_summary = weight_summary[weight_summary['Forecast Weight (KGM)'] > 0]
     if not weight_summary.empty:
-        chart = alt.Chart(weight_summary).mark_bar().encode(
-            x=alt.X('Bay:O', sort=None, title='Bay'),
-            y=alt.Y('Forecast Weight (KGM):Q', title='Forecast Weight (KGM)'),
-            color=alt.Color('Bay Range:N', title='Cluster'),
-            tooltip=['Bay', 'Forecast Weight (KGM)', 'Bay Range']
-        ).properties(title='Forecast Weight (VGM) per Bay by Cluster')
+        chart = alt.Chart(weight_summary).mark_bar().encode(x=alt.X('Bay:O', sort=None, title='Bay'), y=alt.Y('Forecast Weight (KGM):Q', title='Forecast Weight (KGM)'), color=alt.Color('Bay Range:N', title='Cluster'), tooltip=['Bay', 'Forecast Weight (KGM)', 'Bay Range']).properties(title='Forecast Weight (VGM) per Bay by Cluster')
         st.altair_chart(chart, use_container_width=True)
     else:
         st.info("No forecast weight data to display in the chart.")
-        
-def style_dataframe(df):
-    """ Applies left alignment to a DataFrame. """
-    return df.style.set_properties(**{'text-align': 'left'}).set_table_styles([
-        {'selector': 'th, td', 'props': [('text-align', 'left')]}
-    ])
+
+def create_weight_class_forecast_table(flat_dfs_dict, wc_ranges):
+    """ Creates and forecasts container counts based on weight classes. """
+    def get_weight_class(weight, ranges):
+        if weight <= ranges['WC1']: return 'WC1'
+        if weight <= ranges['WC2']: return 'WC2'
+        if weight <= ranges['WC3']: return 'WC3'
+        if weight <= ranges['WC4']: return 'WC4'
+        return 'Overweight'
+
+    dfs_to_merge = []
+    for name, df in flat_dfs_dict.items():
+        if not df.empty:
+            df['Container Type'] = np.where(df['Bay'] % 2 != 0, '20', '40')
+            df['Weight Class'] = df['Weight'].apply(lambda w: get_weight_class(w, wc_ranges))
+            
+            summary = df.groupby(['Port of Discharge', 'Container Type', 'Weight Class']).size().reset_index(name=f"Count ({name})")
+            dfs_to_merge.append(summary.set_index(['Port of Discharge', 'Container Type', 'Weight Class']))
+
+    if not dfs_to_merge: return pd.DataFrame()
+
+    merged_df = pd.concat(dfs_to_merge, axis=1, join='outer').fillna(0).astype(int)
+    count_cols = [col for col in merged_df.columns if col.startswith('Count')]
+    if count_cols:
+        merged_df['Forecast Count'] = merged_df[count_cols].apply(forecast_next_value_wma, axis=1).astype(int)
+    
+    # Pivot the result for better readability
+    final_table = merged_df['Forecast Count'].reset_index().pivot_table(
+        index='Port of Discharge',
+        columns=['Container Type', 'Weight Class'],
+        values='Forecast Count',
+        fill_value=0
+    )
+    return final_table
 
 # --- STREAMLIT APP LAYOUT ---
-
 st.title("🚢 EDI File Comparator & Forecaster")
 st.caption("Upload EDI files to compare, forecast, and validate the load for the next vessel.")
 
@@ -311,14 +243,21 @@ with st.sidebar:
         all_pods = []
         if selected_files:
             try:
-                pivots_for_pods = {f.name: parse_edi_to_pivot(f) for f in uploaded_files if f.name in selected_files}
+                pivots_for_pods = {f.name: parse_edi_to_flat_df(f) for f in uploaded_files if f.name in selected_files}
                 all_pods = sorted(list(pd.concat([df['Port of Discharge'] for df in pivots_for_pods.values() if not df.empty]).unique()))
             except Exception as e:
                 st.error(f"Error getting PODs: {e}")
         
         excluded_pods = st.multiselect("3. Exclude Ports of Discharge (optional):", options=all_pods)
         
-        num_clusters = st.number_input("4. Select number of clusters:", min_value=2, max_value=20, value=6, step=1, help="This will group the Bays into the selected number of ranges for analysis.")
+        with st.expander("Weight Class Settings"):
+            wc1 = st.number_input("WC1 Upper Limit (KGM)", value=9900)
+            wc2 = st.number_input("WC2 Upper Limit (KGM)", value=15900)
+            wc3 = st.number_input("WC3 Upper Limit (KGM)", value=21900)
+            wc4 = st.number_input("WC4 Upper Limit (KGM)", value=30400)
+            wc_ranges = {'WC1': wc1, 'WC2': wc2, 'WC3': wc3, 'WC4': wc4}
+        
+        num_clusters = st.number_input("5. Select number of clusters:", min_value=2, max_value=20, value=6, step=1, help="This will group the Bays into the selected number of ranges for analysis.")
 
 
 if not uploaded_files or len(uploaded_files) < 2:
@@ -326,74 +265,63 @@ if not uploaded_files or len(uploaded_files) < 2:
 elif 'selected_files' in locals() and len(selected_files) < 2:
     st.warning("Please select at least 2 historical files in the sidebar to display the comparison.")
 else:
-    # --- Data Processing ---
     with st.spinner("Analyzing files..."):
+        # Use the already parsed flat dataframes if available
         if 'pivots_for_pods' in locals() and all(f in pivots_for_pods for f in selected_files):
-             pivots_dict = {name: pivots_for_pods[name] for name in selected_files}
+             flat_dfs_dict = {name: pivots_for_pods[name] for name in selected_files}
         else:
-             pivots_dict = {f.name: parse_edi_to_pivot(f) for f in uploaded_files if f.name in selected_files}
+             flat_dfs_dict = {f.name: parse_edi_to_flat_df(f) for f in uploaded_files if f.name in selected_files}
+
+        # Create bay-level pivots for existing analysis
+        pivots_dict = {}
+        for name, df in flat_dfs_dict.items():
+            pivots_dict[name] = df.groupby(["Bay", "Port of Discharge"], as_index=False).agg(
+                **{'Container Count': ('Bay', 'size'), 'Total Weight': ('Weight', 'sum')}
+            )
 
         comparison_df = compare_multiple_pivots(pivots_dict)
         
         if excluded_pods:
             comparison_df = comparison_df[~comparison_df['Port of Discharge'].isin(excluded_pods)]
+            # Also filter the flat dataframes
+            for name in flat_dfs_dict:
+                flat_dfs_dict[name] = flat_dfs_dict[name][~flat_dfs_dict[name]['Port of Discharge'].isin(excluded_pods)]
+
 
     if comparison_df.empty:
         st.error("Could not generate a valid comparison from the selected files. Please check the files or your settings.")
     else:
-        # --- UI TABS ---
-        tab1, tab2 = st.tabs(["Forecast Analysis", "Forecast vs. Actual"])
+        st.header("📊 Summary per Vessel")
+        create_summary_chart(comparison_df)
+        st.markdown("---")
 
-        with tab1:
-            st.header("📊 Summary per Vessel")
-            create_summary_chart(comparison_df)
-            st.markdown("---")
+        st.header("🎯 Cluster Analysis")
+        df_with_clusters = add_cluster_info(comparison_df, num_clusters)
+        
+        st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
+        cluster_table = create_summarized_cluster_table(df_with_clusters)
+        if not cluster_table.empty:
+            st.dataframe(cluster_table.set_index('CLUSTER'), use_container_width=True)
 
-            st.header("🎯 Cluster Analysis")
-            df_with_clusters = add_cluster_info(comparison_df, num_clusters)
+        st.subheader("Macro Slot Needs")
+        macro_slot_table = create_macro_slot_table(df_with_clusters)
+        if not macro_slot_table.empty:
+            st.dataframe(macro_slot_table.set_index('CLUSTER'), use_container_width=True)
+        
+        st.markdown("---")
+
+        st.header("⚖️ Weight Class Analysis")
+        wc_table = create_weight_class_forecast_table(flat_dfs_dict, wc_ranges)
+        if not wc_table.empty:
+            st.dataframe(wc_table, use_container_width=True)
+        else:
+            st.info("No weight data available to generate the Weight Class analysis.")
+        
+        st.markdown("---")
+        
+        with st.expander("Show Detailed Comparison & Forecast Table"):
+            display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
+            st.dataframe(comparison_df[display_cols], use_container_width=True)
             
-            st.subheader("Forecast Allocation Summary per Cluster (in Boxes)")
-            cluster_table = create_summarized_cluster_table(df_with_clusters)
-            if not cluster_table.empty:
-                st.dataframe(style_dataframe(cluster_table.set_index('CLUSTER')), use_container_width=True)
-
-            st.subheader("Macro Slot Needs")
-            macro_slot_table = create_macro_slot_table(df_with_clusters)
-            if not macro_slot_table.empty:
-                st.dataframe(style_dataframe(macro_slot_table.set_index('CLUSTER')), use_container_width=True)
-            
-            st.markdown("---")
-            
-            with st.expander("Show Detailed Comparison & Forecast Table"):
-                display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
-                st.dataframe(style_dataframe(comparison_df[display_cols]), use_container_width=True)
-                
-            st.header("⚖️ Forecast Weight (VGM) Chart per Bay")
-            create_colored_weight_chart(df_with_clusters)
-
-        with tab2:
-            st.header("✔︎ Validate Forecast with Actual Data")
-            current_edi_file = st.file_uploader("Upload current EDI file for validation", type=["edi", "txt"])
-
-            if current_edi_file:
-                actual_df = parse_edi_to_pivot(current_edi_file)
-                if not actual_df.empty:
-                    # Filter actuals based on sidebar selection
-                    if excluded_pods:
-                        actual_df = actual_df[~actual_df['Port of Discharge'].isin(excluded_pods)]
-
-                    dt, da, stbl, sa = generate_validation_tables(comparison_df, actual_df)
-                    
-                    st.subheader("Score 1: Overall and per POD Accuracy")
-                    st.metric(label="Overall Accuracy Score", value=f"{sa:.2f}%")
-                    create_validation_summary_chart(stbl)
-                    
-                    st.subheader("Score 2: Detailed (per Bay, per POD) Accuracy")
-                    # --- FIX: Format metric to remove unnecessary decimals ---
-                    st.metric(label="Detailed Accuracy Score", value=f"{da:.2f}%")
-                    with st.expander("Show Detailed Validation Table"):
-                        st.dataframe(style_dataframe(dt), use_container_width=True)
-                else:
-                    st.warning(f"Could not parse the current EDI file: {current_edi_file.name}")
-            else:
-                st.info("Upload a 'current' EDI file to see the forecast validation.")
+        st.header("⚖️ Forecast Weight (VGM) Chart per Bay")
+        create_colored_weight_chart(df_with_clusters)
