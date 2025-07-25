@@ -37,14 +37,14 @@ def parse_edi_to_flat_df(uploaded_file, file_type='export'):
                 current_container_data["Bay"] = None
         elif line.startswith("LOC+11+"):
             try:
-                pod = line.split("+")[2].split(":")[0]
+                pod = line.split("+")[2].split(":")[0].strip()
                 current_container_data["Port of Discharge"] = pod.replace("'", "")
             except IndexError:
                 pass
         elif line.startswith("LOC+9+"):
             try:
-                pol = line.split("+")[2].split(":")[0]
-                current_container_data["Port of Loading"] = pol.strip().upper().replace("'", "")
+                pol = line.split("+")[2].split(":")[0].strip()
+                current_container_data["Port of Loading"] = pol.replace("'", "")
             except IndexError:
                 pass
         elif line.startswith("MEA+VGM++KGM:"):
@@ -79,12 +79,14 @@ def parse_edi_to_flat_df(uploaded_file, file_type='export'):
         if "Port of Loading" not in df_all.columns:
             st.error("Tidak dapat menemukan informasi 'Port of Loading' di file EDI.")
             return pd.DataFrame()
-        df_filtered = df_all.loc[df_all["Port of Loading"] == "IDJKT"].copy()
+        # Filter yang lebih kuat, mengabaikan spasi dan huruf besar/kecil
+        df_filtered = df_all.loc[df_all["Port of Loading"].str.strip().str.upper() == "IDJKT"].copy()
     elif file_type == 'import':
         if "Port of Discharge" not in df_all.columns:
             st.error("Tidak dapat menemukan informasi 'Port of Discharge' di file EDI.")
             return pd.DataFrame()
-        df_filtered = df_all.loc[df_all["Port of Discharge"] == "IDJKT"].copy()
+        # Filter yang lebih kuat, mengabaikan spasi dan huruf besar/kecil
+        df_filtered = df_all.loc[df_all["Port of Discharge"].str.strip().str.upper() == "IDJKT"].copy()
     else:
         return pd.DataFrame()
 
