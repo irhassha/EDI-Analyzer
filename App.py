@@ -15,12 +15,58 @@ def extract_date_from_edi_content(content):
                 continue
     return None
 
+# --- Fungsi parser EDI sederhana ---
+def parse_export_edi(uploaded_file):
+    uploaded_file.seek(0)
+    content = uploaded_file.read().decode("utf-8", errors="ignore")
+    lines = content.strip().split("'")
+
+    all_records = []
+    current = {}
+
+    for line in lines:
+        line = line.strip()
+        if line.startswith("LOC+147+"):  # Bay info
+            if current.get("BAY"):
+                all_records.append(current)
+            current = {}
+            try:
+                full_bay = line.split("+")[2].split(":")[0]
+                current["BAY"] = int(full_bay[1:3]) if len(full_bay) >= 3 else int(full_bay)
+            except:
+                current["BAY"] = None
+        elif line.startswith("MEA+VGM++KGM:"):
+            try:
+                weight = line.split(":")[-1]
+                current["WEIGHT"] = float(weight)
+            except:
+                current["WEIGHT"] = None
+    if current.get("BAY"):
+        all_records.append(current)
+
+    df = pd.DataFrame(all_records)
+    return df.dropna(subset=["BAY"]).fillna(0)
+
+# --- Fungsi forecasting WMA ---
+def weighted_moving_average(df):
+    if df.empty:
+        return pd.DataFrame()
+    df = df.sort_values("DATE")
+    grouped = df.groupby(["BAY", "DATE"]).size().reset_index(name="COUNT")
+
+    results = []
+    for bay, group in grouped.groupby("BAY"):
+        series = group.sort_values("DATE")["COUNT"]
+        weights = np.arange(1, len(series)+1)
+        forecast = round(np.average(series, weights=weights)) if len(series) > 1 else int(series.mean())
+        results.append({"BAY": bay, "FORECAST_NEXT": forecast})
+    return pd.DataFrame(results)
+
 # --- Proses file dan ekstrak tanggal ---
 def process_file(uploaded_file):
     filename = uploaded_file.name
     content = uploaded_file.read().decode("utf-8", errors="ignore")
 
-    # Ambil tanggal dari nama file jika ada
     date_part = filename.replace(".edi", "").replace(".txt", "").split("_")[-1]
     try:
         date = pd.to_datetime(date_part, format="%Y%m%d")
