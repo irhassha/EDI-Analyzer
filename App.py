@@ -156,7 +156,7 @@ def add_cluster_info(df, num_clusters=6):
     df_clustered['Bay Range'] = df_clustered.groupby('Cluster ID')['Bay'].transform(lambda x: f"{x.min()}-{x.max()}")
     return df_clustered
 
-def create_summary_chart(comparison_df):
+def create_summary_chart(comparison_df, file_dates): # Added file_dates parameter
     """ Membuat grafik batang bertumpuk yang menampilkan jumlah total kontainer per sumber. """
     if comparison_df.empty: return
     summary_cols = [col for col in comparison_df.columns if col.startswith('Count') or 'Forecast (Next Vessel)' in col]
@@ -167,11 +167,38 @@ def create_summary_chart(comparison_df):
     except KeyError:
         st.warning("Tidak dapat membuat grafik ringkasan karena data tidak ada.")
         return
-    melted_df['Source Label'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
+
+    # Extract original file name from 'Source' (e.g., "Count (my_file.edi)" -> "my_file.edi")
+    # Handle 'Forecast (Next Vessel)' case separately
+    melted_df['Original_File_Name'] = melted_df['Source'].apply(
+        lambda x: re.search(r'Count \((.*?)\)', x).group(1) if 'Count (' in x else x
+    )
+
+    # Create Source Label with date
+    def get_display_label(row):
+        file_name = row['Original_File_Name']
+        if file_name == 'Forecast (Next Vessel)':
+            return 'Forecast (Next Vessel)'
+        date_obj = file_dates.get(file_name)
+        if date_obj:
+            return f"{file_name}\n({date_obj.strftime('%d %b %Y')})" # Format date as DD Mon YYYY
+        return file_name # Fallback if date not found
+
+    melted_df['Source Label'] = melted_df.apply(get_display_label, axis=1)
+
     totals_df = melted_df.groupby('Source Label')['Container Count'].sum().reset_index(name='Total Count')
-    bars = alt.Chart(melted_df).mark_bar().encode(x=alt.X('Source Label:N', sort=None, title='Data Source (Vessel/Forecast)', axis=alt.Axis(labelAngle=0, labelLimit=200)), y=alt.Y('sum(Container Count):Q', title='Total Container Count'), color=alt.Color('Port of Discharge:N', title='Port of Discharge'), tooltip=['Source Label', 'Port of Discharge', 'Container Count'])
-    text = alt.Chart(totals_df).mark_text(align='center', baseline='bottom', dy=-10, color='white').encode(x=alt.X('Source Label:N', sort=None), y=alt.Y('Total Count:Q'), text=alt.Text('Total Count:Q', format=','))
-    chart = (bars + text).properties(title='Container Composition per Vessel and Forecast')
+    bars = alt.Chart(melted_df).mark_bar().encode(
+        x=alt.X('Source Label:N', sort=None, title='Sumber Data (Kapal/Prediksi)', axis=alt.Axis(labelAngle=-45, labelLimit=200)),
+        y=alt.Y('sum(Container Count):Q', title='Jumlah Total Kontainer'),
+        color=alt.Color('Port of Discharge:N', title='Port of Discharge'),
+        tooltip=['Source Label', 'Port of Discharge', 'Container Count']
+    )
+    text = alt.Chart(totals_df).mark_text(align='center', baseline='bottom', dy=-10, color='white').encode(
+        x=alt.X('Source Label:N', sort=None),
+        y=alt.Y('Total Count:Q'),
+        text=alt.Text('Total Count:Q', format=',')
+    )
+    chart = (bars + text).properties(title='Komposisi Kontainer per Kapal dan Prediksi')
     st.altair_chart(chart, use_container_width=True)
 
 def create_colored_weight_chart(df_with_clusters):
@@ -228,10 +255,10 @@ def extract_date_from_edi_content(edi_content):
     """
     Mengekstrak tanggal dari konten file EDI mencari baris DTM+137:YYMMDD.
     """
-    match = re.search(r"DTM\+137:(\d{6})", edi_content) # Mengubah (\d{8}) menjadi (\d{6})
+    match = re.search(r"DTM\+137:(\d{6})", edi_content)
     if match:
         try:
-            return datetime.strptime(match.group(1), '%y%m%d').date() # Mengubah '%Y%m%d' menjadi '%y%m%d'
+            return datetime.strptime(match.group(1), '%y%m%d').date()
         except ValueError:
             pass
     return None
@@ -317,7 +344,7 @@ with tab1:
             st.error("Tidak dapat membuat perbandingan yang valid dari file yang dipilih. Silakan periksa file atau pengaturan Anda.")
         else:
             st.header("📊 Ringkasan per Kapal")
-            create_summary_chart(comparison_df)
+            create_summary_chart(comparison_df, file_dates) # Pass file_dates to the chart function
             st.markdown("---")
 
             st.header("🎯 Analisis Kluster & Kelas Berat")
