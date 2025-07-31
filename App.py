@@ -4,10 +4,6 @@ import numpy as np
 import io
 import altair as alt
 
-st.title("📦 Export Forecast")
-
-uploaded_files = st.file_uploader("Upload historical EDI files", type=["edi", "txt"], accept_multiple_files=True)
-
 # --- Fungsi bantu untuk ambil tanggal dari isi file ---
 def extract_date_from_edi_content(content):
     for line in content.replace("'", "\n").splitlines():
