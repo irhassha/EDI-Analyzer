@@ -3,113 +3,8 @@ import pandas as pd
 import numpy as np
 import io
 import altair as alt
-
-# --- Fungsi bantu untuk ambil tanggal dari isi file ---
-def extract_date_from_edi_content(content):
-    for line in content.replace("'", "\n").splitlines():
-        if "DTM+137:" in line:
-            try:
-                date_str = line.split("DTM+137:")[1].split(":")[0]
-                return pd.to_datetime(date_str, format="%Y%m%d")
-            except:
-                continue
-    return None
-
-# --- Fungsi parser EDI sederhana ---
-def parse_export_edi(uploaded_file):
-    uploaded_file.seek(0)
-    content = uploaded_file.read().decode("utf-8", errors="ignore")
-    lines = content.strip().split("'")
-
-    all_records = []
-    current = {}
-
-    for line in lines:
-        line = line.strip()
-        if line.startswith("LOC+147+"):  # Bay info
-            if current.get("BAY"):
-                all_records.append(current)
-            current = {}
-            try:
-                full_bay = line.split("+")[2].split(":")[0]
-                current["BAY"] = int(full_bay[1:3]) if len(full_bay) >= 3 else int(full_bay)
-            except:
-                current["BAY"] = None
-        elif line.startswith("MEA+VGM++KGM:"):
-            try:
-                weight = line.split(":")[-1]
-                current["WEIGHT"] = float(weight)
-            except:
-                current["WEIGHT"] = None
-    if current.get("BAY"):
-        all_records.append(current)
-
-    df = pd.DataFrame(all_records)
-    return df.dropna(subset=["BAY"]).fillna(0)
-
-# --- Fungsi forecasting WMA ---
-def weighted_moving_average(df):
-    if df.empty:
-        return pd.DataFrame()
-    df = df.sort_values("DATE")
-    grouped = df.groupby(["BAY", "DATE"]).size().reset_index(name="COUNT")
-
-    results = []
-    for bay, group in grouped.groupby("BAY"):
-        series = group.sort_values("DATE")["COUNT"]
-        weights = np.arange(1, len(series)+1)
-        forecast = round(np.average(series, weights=weights)) if len(series) > 1 else int(series.mean())
-        results.append({"BAY": bay, "FORECAST_NEXT": forecast})
-    return pd.DataFrame(results)
-
-# --- Proses file dan ekstrak tanggal ---
-def process_file(uploaded_file):
-    filename = uploaded_file.name
-    content = uploaded_file.read().decode("utf-8", errors="ignore")
-
-    date_part = filename.replace(".edi", "").replace(".txt", "").split("_")[-1]
-    try:
-        date = pd.to_datetime(date_part, format="%Y%m%d")
-    except:
-        extracted_date = extract_date_from_edi_content(content)
-        if extracted_date:
-            date = extracted_date
-        else:
-            date = datetime.today()
-            st.warning(f"⚠️ File '{filename}' has no valid date. Using today's date instead: {date.strftime('%Y-%m-%d')}")
-
-    uploaded_file.seek(0)
-    df = parse_export_edi(uploaded_file)
-    df["DATE"] = date
-    return df
-
-if uploaded_files:
-    all_data = []
-    for file in uploaded_files:
-        df = process_file(file)
-        all_data.append(df)
-
-    forecast_df = pd.concat(all_data, ignore_index=True)
-    forecast_df.sort_values("DATE", inplace=True)
-
-    st.subheader("Parsed EDI Data")
-    st.dataframe(forecast_df, use_container_width=True, height=300)
-
-    st.subheader("Forecast Parameters")
-    bay_columns = forecast_df["BAY"].dropna().unique().tolist()
-    selected_bays = st.multiselect("Select BAYs to forecast", bay_columns, default=bay_columns)
-
-    selected_df = forecast_df[forecast_df["BAY"].isin(selected_bays)]
-
-    forecast_result = weighted_moving_average(selected_df)
-
-    st.subheader("Forecast Result (Next 7 Days)")
-    st.dataframe(forecast_result, use_container_width=True, height=300)
-
-    csv = forecast_result.to_csv(index=False).encode("utf-8")
-    st.download_button("Download Forecast CSV", csv, "forecast_result.csv", "text/csv")
-else:
-    st.info("Please upload one or more EDI files to begin forecasting.")
+import re
+from datetime import datetime
 
 # Konfigurasi halaman
 st.set_page_config(page_title="EDI Forecaster", layout="wide")
@@ -316,6 +211,31 @@ def create_wc_forecast_df(flat_dfs_dict, wc_ranges):
     
     return merged_df.reset_index()
 
+def extract_date_from_filename(filename):
+    """
+    Mengekstrak tanggal dari nama file dengan format YYYYMMDD.
+    Contoh: EDI_EXPORT_20250730.edi -> 2025-07-30
+    """
+    match = re.search(r'(\d{8})', filename)
+    if match:
+        try:
+            return datetime.strptime(match.group(1), '%Y%m%d').date()
+        except ValueError:
+            pass
+    return None
+
+def extract_date_from_edi_content(edi_content):
+    """
+    Mengekstrak tanggal dari konten file EDI mencari baris DTM+137:YYMMDD.
+    """
+    match = re.search(r"DTM\+137:(\d{6})", edi_content) # Mengubah (\d{8}) menjadi (\d{6})
+    if match:
+        try:
+            return datetime.strptime(match.group(1), '%y%m%d').date() # Mengubah '%Y%m%d' menjadi '%y%m%d'
+        except ValueError:
+            pass
+    return None
+
 # --- TATA LETAK APLIKASI STREAMLIT ---
 st.title("🚢 EDI File Analyzer")
 st.caption("Analisis file EDI untuk perencanaan muat (export) dan bongkar (import).")
@@ -328,13 +248,34 @@ with tab1:
         uploaded_files = st.file_uploader("1. Unggah file EDI historis (Export)", type=["edi", "txt"], accept_multiple_files=True)
         
         if uploaded_files:
-            file_names = list(p.name for p in uploaded_files)
-            selected_files = st.multiselect("2. Pilih file (secara berurutan):", options=file_names, default=file_names)
+            # Mengumpulkan tanggal dari setiap file yang diunggah
+            file_dates = {}
+            for f in uploaded_files:
+                file_date = extract_date_from_filename(f.name)
+                if not file_date:
+                    # Jika tidak ada tanggal di nama file, coba dari konten
+                    f.seek(0)
+                    content = f.read().decode("utf-8", errors='ignore')
+                    file_date = extract_date_from_edi_content(content)
+                
+                if file_date:
+                    file_dates[f.name] = file_date
+                else:
+                    # Fallback jika tidak ada tanggal yang ditemukan
+                    file_dates[f.name] = datetime.today().date() # Menggunakan tanggal hari ini sebagai fallback terakhir
+                    st.warning(f"Tidak dapat mengekstrak tanggal dari file '{f.name}'. Menggunakan tanggal hari ini sebagai gantinya.")
+
+            # Mengurutkan file berdasarkan tanggal
+            sorted_file_names = sorted(file_dates, key=file_dates.get)
+            
+            selected_files = st.multiselect("2. Pilih file (secara berurutan berdasarkan tanggal):", options=sorted_file_names, default=sorted_file_names)
             
             all_pods = []
             if selected_files:
                 try:
-                    pivots_for_pods = {f.name: parse_edi_to_flat_df(f, file_type='export') for f in uploaded_files if f.name in selected_files}
+                    # Pastikan file yang dipilih ada di uploaded_files
+                    selected_uploaded_files = [f for f in uploaded_files if f.name in selected_files]
+                    pivots_for_pods = {f.name: parse_edi_to_flat_df(f, file_type='export') for f in selected_uploaded_files}
                     all_pods = sorted(list(pd.concat([df['Port of Discharge'] for df in pivots_for_pods.values() if not df.empty]).unique()))
                 except Exception as e:
                     st.error(f"Error saat mengambil POD: {e}")
@@ -356,10 +297,9 @@ with tab1:
         st.warning("Silakan pilih minimal 2 file historis di sidebar untuk menampilkan perbandingan.")
     else:
         with st.spinner("Menganalisis file export..."):
-            if 'pivots_for_pods' in locals() and all(f in pivots_for_pods for f in selected_files):
-                 flat_dfs_dict = {name: pivots_for_pods[name] for name in selected_files}
-            else:
-                 flat_dfs_dict = {f.name: parse_edi_to_flat_df(f, file_type='export') for f in uploaded_files if f.name in selected_files}
+            # Memastikan file yang dipilih ada di uploaded_files dan diurutkan
+            selected_uploaded_files_for_parsing = [f for name in selected_files for f in uploaded_files if f.name == name]
+            flat_dfs_dict = {f.name: parse_edi_to_flat_df(f, file_type='export') for f in selected_uploaded_files_for_parsing}
 
             pivots_dict = {}
             for name, df in flat_dfs_dict.items():
