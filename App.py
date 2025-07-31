@@ -4,12 +4,6 @@ import numpy as np
 import io
 import altair as alt
 
-from datetime import datetime
-from modules.parser import parse_export_edi
-from modules.forecasting import weighted_moving_average
-
-st.set_page_config(page_title="Export Forecast", layout="wide")
-
 st.title("📦 Export Forecast")
 
 uploaded_files = st.file_uploader("Upload historical EDI files", type=["edi", "txt"], accept_multiple_files=True)
