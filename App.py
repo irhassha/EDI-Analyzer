@@ -181,7 +181,8 @@ def create_summary_chart(comparison_df, file_dates): # Added file_dates paramete
             return 'Forecast (Next Vessel)'
         date_obj = file_dates.get(file_name)
         if date_obj:
-            return f"{file_name}\n({date_obj.strftime('%d %b %Y')})" # Format date as DD Mon YYYY
+            # Mengubah format agar tanggal berada di baris baru tanpa tanda kurung
+            return f"{file_name}\n{date_obj.strftime('%d %b %Y')}" 
         return file_name # Fallback if date not found
 
     melted_df['Source Label'] = melted_df.apply(get_display_label, axis=1)
@@ -235,6 +236,8 @@ def create_wc_forecast_df(flat_dfs_dict, wc_ranges):
     count_cols = [col for col in merged_df.columns if col.startswith('Count')]
     if count_cols:
         merged_df['Forecast Count'] = merged_df[count_cols].apply(forecast_next_value_wma, axis=1).astype(int)
+    if weight_cols:
+        merged_df['Forecast Weight (KGM)'] = merged_df[weight_cols].apply(forecast_next_value_wma, axis=1).astype(int)
     
     return merged_df.reset_index()
 
