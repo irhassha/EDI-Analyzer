@@ -4,6 +4,81 @@ import numpy as np
 import io
 import altair as alt
 
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+from datetime import datetime
+from modules.parser import parse_export_edi
+from modules.forecasting import weighted_moving_average
+
+st.set_page_config(page_title="Export Forecast", layout="wide")
+
+st.title("📦 Export Forecast")
+
+uploaded_files = st.file_uploader("Upload historical EDI files", type=["edi", "txt"], accept_multiple_files=True)
+
+# --- Fungsi bantu untuk ambil tanggal dari isi file ---
+def extract_date_from_edi_content(content):
+    for line in content.replace("'", "\n").splitlines():
+        if "DTM+137:" in line:
+            try:
+                date_str = line.split("DTM+137:")[1].split(":")[0]
+                return pd.to_datetime(date_str, format="%Y%m%d")
+            except:
+                continue
+    return None
+
+# --- Proses file dan ekstrak tanggal ---
+def process_file(uploaded_file):
+    filename = uploaded_file.name
+    content = uploaded_file.read().decode("utf-8", errors="ignore")
+
+    # Ambil tanggal dari nama file jika ada
+    date_part = filename.replace(".edi", "").replace(".txt", "").split("_")[-1]
+    try:
+        date = pd.to_datetime(date_part, format="%Y%m%d")
+    except:
+        extracted_date = extract_date_from_edi_content(content)
+        if extracted_date:
+            date = extracted_date
+        else:
+            date = datetime.today()
+            st.warning(f"⚠️ File '{filename}' has no valid date. Using today's date instead: {date.strftime('%Y-%m-%d')}")
+
+    uploaded_file.seek(0)
+    df = parse_export_edi(uploaded_file)
+    df["DATE"] = date
+    return df
+
+if uploaded_files:
+    all_data = []
+    for file in uploaded_files:
+        df = process_file(file)
+        all_data.append(df)
+
+    forecast_df = pd.concat(all_data, ignore_index=True)
+    forecast_df.sort_values("DATE", inplace=True)
+
+    st.subheader("Parsed EDI Data")
+    st.dataframe(forecast_df, use_container_width=True, height=300)
+
+    st.subheader("Forecast Parameters")
+    bay_columns = forecast_df["BAY"].dropna().unique().tolist()
+    selected_bays = st.multiselect("Select BAYs to forecast", bay_columns, default=bay_columns)
+
+    selected_df = forecast_df[forecast_df["BAY"].isin(selected_bays)]
+
+    forecast_result = weighted_moving_average(selected_df)
+
+    st.subheader("Forecast Result (Next 7 Days)")
+    st.dataframe(forecast_result, use_container_width=True, height=300)
+
+    csv = forecast_result.to_csv(index=False).encode("utf-8")
+    st.download_button("Download Forecast CSV", csv, "forecast_result.csv", "text/csv")
+else:
+    st.info("Please upload one or more EDI files to begin forecasting.")
+
 # Konfigurasi halaman
 st.set_page_config(page_title="EDI Forecaster", layout="wide")
 
