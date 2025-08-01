@@ -1,4 +1,4 @@
-import streamlit as st
+vimport streamlit as st
 import pandas as pd
 import numpy as np
 import io
@@ -6,7 +6,7 @@ import altair as alt
 import re
 from datetime import datetime
 
-# Page Configuration
+# Page configuration
 st.set_page_config(page_title="EDI Forecaster", layout="wide")
 
 # --- Core Functions ---
@@ -20,7 +20,7 @@ def parse_edi_to_flat_df(uploaded_file, file_type='export'):
     try:
         uploaded_file.seek(0)
         content = uploaded_file.read().decode("utf-8", errors='ignore')
-        # --- FIX: Splitting data by apostrophe, not new line ---
+        # --- FIX: Split data by apostrophe, not by newline ---
         lines = content.strip().split("'")
     except Exception as e:
         st.error(f"Failed to read file: {e}")
@@ -34,7 +34,7 @@ def parse_edi_to_flat_df(uploaded_file, file_type='export'):
             continue
 
         if line.startswith("LOC+147+"):
-            if current_container_data.get("Bay"):  # Only save if there is bay data
+            if current_container_data.get("Bay"): # Only save if there is bay data
                 all_records.append(current_container_data)
             current_container_data = {'Weight': 0}
             try:
@@ -61,7 +61,7 @@ def parse_edi_to_flat_df(uploaded_file, file_type='export'):
             except (IndexError, ValueError):
                 pass
         elif line.startswith("EQD+CN+"):
-            try:
+             try:
                 size_code = line.split('+')[3]
                 if size_code.startswith('2'):
                     current_container_data['Size'] = '20'
@@ -69,7 +69,7 @@ def parse_edi_to_flat_df(uploaded_file, file_type='export'):
                     current_container_data['Size'] = '40'
                 else:
                     current_container_data['Size'] = 'Other'
-            except IndexError:
+             except IndexError:
                 current_container_data['Size'] = 'Unknown'
 
     if current_container_data.get("Bay"):
@@ -103,7 +103,7 @@ def parse_edi_to_flat_df(uploaded_file, file_type='export'):
     return df_display
 
 def forecast_next_value_wma(series):
-    """ Predicts the next value using Weighted Moving Average (WMA). """
+    """ Forecasts the next value using Weighted Moving Average (WMA). """
     if len(series.dropna()) < 2:
         return round(series.mean()) if not series.empty else 0
     y = series.values
@@ -115,7 +115,7 @@ def forecast_next_value_wma(series):
     return max(0, round(weighted_avg))
 
 def compare_multiple_pivots(pivots_dict_selected):
-    """ Compares multiple pivot DataFrames and returns a merged DataFrame with predictions. """
+    """ Compares multiple pivot DataFrames and returns a combined DataFrame with forecasts. """
     if not pivots_dict_selected or len(pivots_dict_selected) < 2: return pd.DataFrame()
     dfs_to_merge = []
     for name, df in pivots_dict_selected.items():
@@ -156,7 +156,7 @@ def add_cluster_info(df, num_clusters=6):
     df_clustered['Bay Range'] = df_clustered.groupby('Cluster ID')['Bay'].transform(lambda x: f"{x.min()}-{x.max()}")
     return df_clustered
 
-def create_summary_chart(comparison_df):
+def create_summary_chart(comparison_df): # Removed file_dates parameter
     """ Creates a stacked bar chart showing the total container count per source. """
     if comparison_df.empty: return
     summary_cols = [col for col in comparison_df.columns if col.startswith('Count') or 'Forecast (Next Vessel)' in col]
@@ -165,17 +165,35 @@ def create_summary_chart(comparison_df):
     try:
         melted_df = pd.melt(summary_df, id_vars=['Port of Discharge'], var_name='Source', value_name='Container Count')
     except KeyError:
-        st.warning("Cannot create a summary chart because there is no data.")
+        st.warning("Could not create summary chart as no data exists.")
         return
-    melted_df['Source Label'] = melted_df['Source'].str.replace('Count \(', '', regex=True).str.replace('\)', '', regex=True)
+
+    # Extract original file name from 'Source' (e.g., "Count (my_file.edi)" -> "my_file.edi")
+    # Handle 'Forecast (Next Vessel)' case separately
+    melted_df['Original_File_Name'] = melted_df['Source'].apply(
+        lambda x: re.search(r'Count \((.*?)\)', x).group(1) if 'Count (' in x else x
+    )
+
+    # Simplified Source Label without date
+    melted_df['Source Label'] = melted_df['Original_File_Name']
+
     totals_df = melted_df.groupby('Source Label')['Container Count'].sum().reset_index(name='Total Count')
-    bars = alt.Chart(melted_df).mark_bar().encode(x=alt.X('Source Label:N', sort=None, title='Data Source (Vessel/Forecast)', axis=alt.Axis(labelAngle=0, labelLimit=200)), y=alt.Y('sum(Container Count):Q', title='Total Container Count'), color=alt.Color('Port of Discharge:N', title='Port of Discharge'), tooltip=['Source Label', 'Port of Discharge', 'Container Count'])
-    text = alt.Chart(totals_df).mark_text(align='center', baseline='bottom', dy=-10, color='white').encode(x=alt.X('Source Label:N', sort=None), y=alt.Y('Total Count:Q'), text=alt.Text('Total Count:Q', format=','))
+    bars = alt.Chart(melted_df).mark_bar().encode(
+        x=alt.X('Source Label:N', sort=None, title='Data Source (Vessel/Forecast)', axis=alt.Axis(labelAngle=-45, labelLimit=200)),
+        y=alt.Y('sum(Container Count):Q', title='Total Container Count'),
+        color=alt.Color('Port of Discharge:N', title='Port of Discharge'),
+        tooltip=['Source Label', 'Port of Discharge', 'Container Count']
+    )
+    text = alt.Chart(totals_df).mark_text(align='center', baseline='bottom', dy=-10, color='white').encode(
+        x=alt.X('Source Label:N', sort=None),
+        y=alt.Y('Total Count:Q'),
+        text=alt.Text('Total Count:Q', format=',')
+    )
     chart = (bars + text).properties(title='Container Composition per Vessel and Forecast')
     st.altair_chart(chart, use_container_width=True)
 
 def create_colored_weight_chart(df_with_clusters):
-    """ Creates a colored bar chart for the total forecasted weight per Bay. """
+    """ Creates a colored bar chart for total forecast weight per Bay. """
     if df_with_clusters.empty or 'Forecast Weight (KGM)' not in df_with_clusters.columns or 'Bay Range' not in df_with_clusters.columns: return
     weight_summary = df_with_clusters.groupby(['Bay', 'Bay Range'])['Forecast Weight (KGM)'].sum().reset_index()
     weight_summary = weight_summary[weight_summary['Forecast Weight (KGM)'] > 0]
@@ -186,7 +204,7 @@ def create_colored_weight_chart(df_with_clusters):
         st.info("No forecast weight data to display in the chart.")
 
 def get_weight_class(weight, ranges):
-    """ Assigns a weight class based on predefined ranges. """
+    """ Assigns a weight class based on the defined ranges. """
     if weight <= ranges['WC1']: return 'WC1'
     if weight <= ranges['WC2']: return 'WC2'
     if weight <= ranges['WC3']: return 'WC3'
@@ -213,7 +231,7 @@ def create_wc_forecast_df(flat_dfs_dict, wc_ranges):
 
 def extract_date_from_filename(filename):
     """
-    Extracts the date from a filename with YYYYMMDD format.
+    Extracts the date from a filename with a YYYYMMDD format.
     Example: EDI_EXPORT_20250730.edi -> 2025-07-30
     """
     match = re.search(r'(\d{8})', filename)
@@ -236,9 +254,9 @@ def extract_date_from_edi_content(edi_content):
             pass
     return None
 
-# --- STREAMLIT APPLICATION LAYOUT ---
+# --- STREAMLIT APP LAYOUT ---
 st.title("🚢 EDI File Analyzer")
-st.caption("Analyze EDI files for loading (export) and discharging (import) planning.")
+st.caption("Analyze EDI files for loading (export) and discharge (import) planning.")
 
 tab1, tab2 = st.tabs(["Export Forecast", "Import Analysis"])
 
@@ -247,13 +265,12 @@ with tab1:
         st.header("⚙️ Export Analysis Settings")
         uploaded_files = st.file_uploader("1. Upload historical EDI files (Export)", type=["edi", "txt"], accept_multiple_files=True)
         
+        selected_files = []
         if uploaded_files:
-            # Collect dates from each uploaded file
             file_dates = {}
             for f in uploaded_files:
                 file_date = extract_date_from_filename(f.name)
                 if not file_date:
-                    # If no date in the filename, try from the content
                     f.seek(0)
                     content = f.read().decode("utf-8", errors='ignore')
                     file_date = extract_date_from_edi_content(content)
@@ -261,24 +278,20 @@ with tab1:
                 if file_date:
                     file_dates[f.name] = file_date
                 else:
-                    # Fallback if no date is found
-                    file_dates[f.name] = datetime.today().date()  # Use today's date as a last fallback
-                    st.warning(f"Could not extract date from file '{f.name}'. Using today's date instead.")
+                    file_dates[f.name] = datetime.today().date()
+                    st.warning(f"Could not extract date from file '{f.name}'. Using today's date as a fallback.")
 
-            # Sort files by date
             sorted_file_names = sorted(file_dates, key=file_dates.get)
-            
-            selected_files = st.multiselect("2. Select files (in chronological order):", options=sorted_file_names, default=sorted_file_names)
+            selected_files = st.multiselect("2. Select files (sequentially by date):", options=sorted_file_names, default=sorted_file_names)
             
             all_pods = []
             if selected_files:
                 try:
-                    # Ensure selected files exist in uploaded_files
                     selected_uploaded_files = [f for f in uploaded_files if f.name in selected_files]
                     pivots_for_pods = {f.name: parse_edi_to_flat_df(f, file_type='export') for f in selected_uploaded_files}
                     all_pods = sorted(list(pd.concat([df['Port of Discharge'] for df in pivots_for_pods.values() if not df.empty]).unique()))
                 except Exception as e:
-                    st.error(f"Error retrieving PODs: {e}")
+                    st.error(f"Error while fetching PODs: {e}")
             
             excluded_pods = st.multiselect("3. Exclude Port of Discharge (optional):", options=all_pods)
             
@@ -289,15 +302,14 @@ with tab1:
                 wc4 = st.number_input("Upper Limit WC4 (KGM)", value=30400)
                 wc_ranges = {'WC1': wc1, 'WC2': wc2, 'WC3': wc3, 'WC4': wc4}
             
-            num_clusters = st.number_input("4. Select number of clusters:", min_value=2, max_value=20, value=6, step=1, help="This will group the Bays into the selected number of ranges for analysis.")
+            num_clusters = st.number_input("4. Select number of clusters:", min_value=2, max_value=20, value=6, step=1, help="This will group Bays into the selected number of ranges for analysis.")
 
     if not uploaded_files or len(uploaded_files) < 2:
         st.info("ℹ️ Please upload at least 2 historical files in the sidebar to start the export analysis.")
-    elif 'selected_files' in locals() and len(selected_files) < 2:
+    elif len(selected_files) < 2:
         st.warning("Please select at least 2 historical files in the sidebar to display the comparison.")
     else:
         with st.spinner("Analyzing export files..."):
-            # Ensure the selected files exist in uploaded_files and are sorted
             selected_uploaded_files_for_parsing = [f for name in selected_files for f in uploaded_files if f.name == name]
             flat_dfs_dict = {f.name: parse_edi_to_flat_df(f, file_type='export') for f in selected_uploaded_files_for_parsing}
 
@@ -316,8 +328,8 @@ with tab1:
         if comparison_df.empty:
             st.error("Could not create a valid comparison from the selected files. Please check your files or settings.")
         else:
-            st.header("📊 Vessel Summary")
-            create_summary_chart(comparison_df)
+            st.header("📊 Summary per Vessel")
+            create_summary_chart(comparison_df) # No file_dates needed
             st.markdown("---")
 
             st.header("🎯 Cluster & Weight Class Analysis")
@@ -353,7 +365,7 @@ with tab1:
                                 for size in ['20', '40']:
                                     size_data = alloc_df[alloc_df['Container Type'] == size]
                                     if not size_data.empty and size_data['Forecast Count'].sum() > 0:
-                                        st.markdown(f"**{size}' Containers**")
+                                        st.markdown(f"**Container {size}'**")
                                         pivot = size_data.groupby('Port of Discharge')['Forecast Count'].sum().reset_index()
                                         pivot.rename(columns={'Forecast Count': 'Box Count'}, inplace=True)
                                         st.dataframe(pivot, use_container_width=True, hide_index=True)
@@ -365,14 +377,14 @@ with tab1:
                 display_cols = [col for col in comparison_df.columns if not col.startswith('Weight')]
                 st.dataframe(comparison_df[display_cols], use_container_width=True)
                 
-            st.header("⚖️ Bay Forecast Weight (VGM) Chart")
+            st.header("⚖️ Forecast Weight (VGM) per Bay Chart")
             df_with_clusters_for_chart = add_cluster_info(comparison_df, num_clusters)
             create_colored_weight_chart(df_with_clusters_for_chart)
 
 with tab2:
     st.header("📥 Discharge Analysis")
     
-    discharge_file = st.file_uploader("Upload an EDI Discharge file here", type=["edi", "txt"])
+    discharge_file = st.file_uploader("Upload EDI Discharge file here", type=["edi", "txt"])
     
     if discharge_file:
         with st.spinner("Analyzing discharge file..."):
@@ -386,11 +398,11 @@ with tab2:
             count_40ft = len(import_df[import_df['Size'] == '40'])
             
             col1, col2, col3 = st.columns(3)
-            col1.metric("Total Units Discharged", f"{total_units}")
+            col1.metric("Total Discharged Units", f"{total_units}")
             col2.metric("20ft Count", f"{count_20ft}")
             col3.metric("40ft Count", f"{count_40ft}")
             
         else:
-            st.warning("No discharge data for IDJKT found within this file.")
+            st.warning("No discharge data for IDJKT found in this file.")
     else:
         st.info("Please upload an EDI discharge file to see the discharge summary.")
